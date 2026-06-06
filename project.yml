@@ -1,19 +1,9 @@
-parameters: {}
-environment: {}
 packages:
-    - name: sample
-      shared: false
-      environment: {}
-      parameters: {}
-      annotations: {}
-      functions:
-        - name: hello
-          binary: false
-          main: ""
-          runtime: nodejs:default
-          web: true
-          webSecure: false
-          parameters: {}
-          environment: {}
-          annotations: {}
-          limits: {}
+  - name: ask
+    environment:
+      # DO will inject this from your deployment command
+      DISCORD_WEBHOOK_URL: "{DISCORD_WEBHOOK_URL}" 
+    functions:
+      - name: submit
+        runtime: "nodejs:default"
+        web: true # This makes it publicly accessible via HTTP
