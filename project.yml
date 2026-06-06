@@ -2,7 +2,7 @@ packages:
   - name: ask
     environment:
       # DO will inject this from your deployment command
-      DISCORD_WEBHOOK_URL: "{DISCORD_WEBHOOK_URL}" 
+      DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL}" 
     functions:
       - name: submit
         runtime: "nodejs:default"

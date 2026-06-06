@@ -4,12 +4,7 @@ async function main(args) {
     // 1. CORS Preflight Handling for GitHub Pages
     if (args.__ow_method === "options") {
         return {
-            statusCode: 204,
-            headers: {
-                'Access-Control-Allow-Origin': '*',
-                'Access-Control-Allow-Methods': 'POST, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type'
-            }
+            statusCode: 204
         };
     }
 
@@ -17,7 +12,7 @@ async function main(args) {
     if (args.username_honey && args.username_honey.trim() !== "") {
         return { 
             statusCode: 200, 
-            headers: { 'Access-Control-Allow-Origin': '*' },
+            headers: { 'Content-Type': 'application/json' },
             body: { success: true, message: "Submission received." } 
         };
     }
@@ -27,7 +22,7 @@ async function main(args) {
     if (!userQuestion || userQuestion.trim() === "") {
         return {
             statusCode: 400,
-            headers: { 'Access-Control-Allow-Origin': '*' },
+            headers: { 'Content-Type': 'application/json' },
             body: { error: "Question field cannot be empty." }
         };
     }
@@ -56,17 +51,18 @@ async function main(args) {
 
         return {
             statusCode: 200,
-            headers: { 'Access-Control-Allow-Origin': '*' },
+            headers: { 'Content-Type': 'application/json' },
             body: { success: true, message: "Sent successfully!" }
         };
 
     } catch (error) {
         return {
             statusCode: 500,
-            headers: { 'Access-Control-Allow-Origin': '*' },
+            headers: { 'Content-Type': 'application/json' },
             body: { error: "Internal server error failing to dispatch message." }
         };
     }
 }
 
 exports.main = main;
+
