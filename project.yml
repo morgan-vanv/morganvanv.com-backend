@@ -2,7 +2,7 @@ packages:
   - name: ask
     functions:
       - name: submit
-        runtime: "nodejs:default"
+        runtime: "nodejs:24" # pinned: built-in fetch, no dependencies
         web: true # This makes it publicly accessible via HTTP
         environment:
           # DO will inject these from your deployment command (.env)
@@ -15,7 +15,7 @@ packages:
           timeout: 5000 # ms
           memory: 128 # MB
       - name: publish
-        runtime: "nodejs:default"
+        runtime: "nodejs:24" # pinned: built-in fetch and AbortController, no dependencies
         web: true # The links in Discord point here
         environment:
           # Only this function holds the GitHub token; submit never needs it.
@@ -23,5 +23,5 @@ packages:
           GITHUB_TOKEN: "${GITHUB_TOKEN}"
           GITHUB_REPO: "${GITHUB_REPO}" # empty means morgan-vanv/morganvanv.com
         limits:
-          timeout: 30000 # ms: up to ten GitHub calls in a row
+          timeout: 30000 # ms: GitHub calls time out at 8 s each and 25 s in all, before this does
           memory: 128 # MB
