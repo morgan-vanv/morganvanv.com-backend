@@ -16,9 +16,7 @@ Tests: `node --test` (no install needed; on Node 22+ don't pass `test/`, a direc
 
 ## Publish as PR
 
-> **Not live yet: leave `PUBLISH_URL` empty until the site side is merged.** The site doesn't read `content/`
-> yet, and its check that fails a mailbag PR with an empty answer is still to be built. Until both land, a
-> merged visitor PR would publish nothing (or an unanswered question).
+> **Live:** the site side (site #109) is merged: the site reads `content/`, and a mailbag PR fails its checks until it has an answer.
 
 ### The flow
 
@@ -61,7 +59,7 @@ they can't fake it); and fail the checks when the answer under it is empty.
 
 ### Without publishing
 
-With `PUBLISH_URL` empty (or before it's set up), a question, subtitle or star name gets a
+With `PUBLISH_URL=off` (or before it's set up), a question, subtitle or star name gets a
 **To add by hand, create this file** field instead: the path (`content/subtitles/<id>.json`,
 `content/stars/<id>.json` or `content/mailbag/<id>.md`) and the file's exact contents, built by the same code
 publishing uses (`publish-link.js`). Create that file in the site repo to approve it; for a question, write
@@ -80,14 +78,15 @@ outside the form's limits.
      Metadata: Read-only is added by itself. Nothing else: the label calls accept Pull requests permission, so
      Issues isn't needed.
 2. **Make the signing secret:** `openssl rand -hex 32`.
-3. **Fill `.env`** (copy `.env.example`; keep every key, even empty ones): `PUBLISH_SECRET` and `GITHUB_TOKEN`
-   from above, `GITHUB_REPO` empty (it means `morgan-vanv/morganvanv.com`), **`PUBLISH_URL` empty**.
-4. **Deploy:** `doctl serverless deploy . --env .env`. With `PUBLISH_URL` empty, Discord shows the file to
-   create by hand (above) and nothing can be published from a link, so this is safe to do now.
-5. **Note the publish URL:** `doctl serverless functions get ask/publish --url` (it's the `ask/submit` URL with
-   `submit` swapped for `publish`). Keep it for step 6; don't put it in `.env` yet.
-6. **Once the site side is merged** (it reads `content/` and fails a mailbag PR with an empty answer): put the
-   URL in `.env` as `PUBLISH_URL` and deploy again.
+3. **Fill `.env`** (copy `.env.example`; keep every key and **give every one a value**: `doctl` refuses an empty
+   one with "The following substitutions could not be resolved"): `PUBLISH_SECRET` and `GITHUB_TOKEN` from
+   above, `GITHUB_REPO=morgan-vanv/morganvanv.com`, and `PUBLISH_URL` set to the `ask/submit` URL with `publish`
+   in place of `submit`.
+4. **Deploy:** `doctl serverless deploy . --env .env`. The output lists `ask/submit` and `ask/publish`.
+5. **Check the URL:** `doctl serverless functions get ask/publish --url` must match `PUBLISH_URL` exactly; if it
+   doesn't, put the printed one in `.env` and deploy again. Opening it with nothing after it shows a small
+   "No link here" page, which means the function is up.
+6. (Before site #109 was merged this step held `PUBLISH_URL` back; that's no longer needed.)
 7. **Try it:** suggest a subtitle on the site. The Discord message should show **Will publish** and a
    **Publish as PR** link; open it, press the button, and you should land on a new PR labelled `visitor`.
    Remember this test PR stays public even after you close it, so use text you don't mind. Then close it,
@@ -96,8 +95,8 @@ outside the form's limits.
 
 ### Turning it off
 
-- **No more links:** empty `PUBLISH_URL` in `.env` and redeploy. Embeds go back to the file to create by hand.
-- **Kill the links already in Discord too:** also empty `GITHUB_TOKEN` (or revoke the token on GitHub). Making a
+- **No more links:** set `PUBLISH_URL=off` in `.env` and redeploy (not empty: `doctl` refuses empty values). Embeds go back to the file to create by hand.
+- **Kill the links already in Discord too:** also set `GITHUB_TOKEN=off` (or revoke the token on GitHub). Making a
   new `PUBLISH_SECRET` instead invalidates every existing link but leaves publishing on for new ones.
 
 ### When the token expires

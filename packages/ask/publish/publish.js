@@ -14,7 +14,8 @@ const DEFAULT_REPO = 'morgan-vanv/morganvanv.com';
 /** An environment value, or '' when unset (or left as an unfilled `${…}` template). */
 function setting(env, name) {
   const value = typeof env[name] === 'string' ? env[name].trim() : '';
-  return value.startsWith('${') ? '' : value;
+  // doctl refuses an empty substitution, so "off" is how .env switches a setting off.
+  return value.startsWith('${') || value.toLowerCase() === 'off' ? '' : value;
 }
 
 const LINK_ERRORS = {
