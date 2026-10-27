@@ -18,6 +18,8 @@
 
   "observability": {
     "enabled": true,
+    // Drop query strings (the shoutbox's ?client=<id>) from URLs in logs and traces.
+    "redact_query_string": true,
     "logs": {
       "enabled": true,
       // Our own console.log/error only. Invocation logs keep metadata about every request, which can
