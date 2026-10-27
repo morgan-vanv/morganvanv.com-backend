@@ -1,4 +1,5 @@
 import { isBlocked, fold } from './blocklist';
+import { hasVisible, stripInvisible } from './chars';
 import { HOST_NICK, MAX_URLS, NICK_MAX, RESERVED_NICKS, TEXT_MAX } from './config';
 
 /** A shout that passed every check, ready to store. */
@@ -12,22 +13,17 @@ export type Checked<T> = { readonly ok: true; readonly value: T } | { readonly o
 
 const fail = (error: string): { ok: false; error: string } => ({ ok: false, error });
 
-/** Characters that only ever cause trouble in a one-line log: bidi overrides, zero-width spaces, BOMs. */
-const INVISIBLES = /[\u00AD\u061C\u200B\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/g;
-
 /** Length in characters as a person counts them (code points, so an emoji is one). */
 export const charLength = (text: string): number => [...text].length;
 
 /**
- * Tidies shout text into one plain line: control and invisible characters gone, any run of
- * whitespace (newlines included) one space, piles of combining marks (Zalgo) cut down, trimmed.
+ * Tidies shout text into one plain line: lone surrogates replaced, control, invisible and blank-filler
+ * characters gone (chars.ts), any run of whitespace (newlines included) one space, piles of combining
+ * marks (Zalgo) cut down, trimmed.
  */
 export function cleanText(raw: string): string {
-  return raw
-    .normalize('NFC')
-    .replace(/[\t\n\v\f\r]/g, ' ')
+  return stripInvisible(raw.normalize('NFC').replace(/[\t\n\v\f\r]/g, ' '))
     .replace(/\p{Cc}/gu, '')
-    .replace(INVISIBLES, '')
     .replace(/(\p{M}{2})\p{M}+/gu, '$1')
     .replace(/\s+/gu, ' ')
     .trim();
@@ -39,15 +35,18 @@ export function cleanText(raw: string): string {
  * or it's empty or too long.
  */
 export function normaliseNick(raw: string): string | null {
-  const nick = raw.normalize('NFKC').trim().replace(/\s+/gu, '_');
-  if (nick.length < 1 || nick.length > NICK_MAX) return null;
+  const nick = stripInvisible(raw.normalize('NFKC')).trim().replace(/\s+/gu, '_');
+  if (nick.length < 1 || nick.length > NICK_MAX || !hasVisible(nick)) return null;
   return /^[A-Za-z0-9_.-]+$/.test(nick) ? nick : null;
 }
 
-/** Nicks a guest can't take: Morgan's and the obvious stand-ins, in any case or leetspeak. */
+/**
+ * Nicks a guest can't take: anything with "morgan" in it, and the other stand-ins exactly, in any case
+ * or leetspeak.
+ */
 export function isReservedNick(nick: string): boolean {
   const bare = fold(nick).replace(/ /g, '');
-  return RESERVED_NICKS.includes(bare);
+  return bare.includes('morgan') || RESERVED_NICKS.includes(bare);
 }
 
 /** URLs and bare domains in the text. */
@@ -56,11 +55,10 @@ export function countUrls(text: string): number {
   return text.match(pattern)?.length ?? 0;
 }
 
-/** True if the hidden "website" field was filled in, which only bots do. */
+/** True if the hidden "website" field holds some text, which only bots put there. */
 export function isHoneypot(body: unknown): boolean {
   const website = (body as { website?: unknown } | null)?.website;
-  if (website === undefined || website === null) return false;
-  return typeof website !== 'string' || website.trim() !== '';
+  return typeof website === 'string' && website.trim() !== '';
 }
 
 /**
@@ -73,7 +71,7 @@ export function validateShout(body: unknown, host: boolean): Checked<CleanShout>
 
   if (typeof rawText !== 'string') return fail('Say something first.');
   const text = cleanText(rawText);
-  if (!text) return fail('Say something first.');
+  if (!hasVisible(text)) return fail('Say something first.');
   if (charLength(text) > TEXT_MAX) return fail(`Keep it under ${TEXT_MAX} characters.`);
 
   if (host) return { ok: true, value: { nick: HOST_NICK, text, host: true } };
@@ -100,4 +98,15 @@ export function parseShoutId(raw: string): number | null {
 /** A per-tab client id the site made up (a UUID, in practice), or null if it doesn't look like one. */
 export function parseClientId(raw: string | null): string | null {
   return raw && /^[A-Za-z0-9_-]{8,64}$/.test(raw) ? raw : null;
+}
+
+/**
+ * What a bot that filled in the honeypot is shown: its own nick and text, cleaned up as if they'd been
+ * stored, so nothing tells it apart from a real success.
+ */
+export function decoyShout(body: unknown): { nick: string; text: string } {
+  const { nick, text } = (body ?? {}) as { nick?: unknown; text?: unknown };
+  const cleanNick = typeof nick === 'string' ? normaliseNick(nick) : null;
+  const cleanBody = typeof text === 'string' ? [...cleanText(text)].slice(0, TEXT_MAX).join('') : '';
+  return { nick: cleanNick ?? 'guest', text: cleanBody };
 }

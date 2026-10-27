@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  charLength, cleanText, countUrls, isHoneypot, isReservedNick, normaliseNick, parseClientId, parseShoutId, validateShout,
+  charLength, cleanText, countUrls, decoyShout, isHoneypot, isReservedNick, normaliseNick, parseClientId, parseShoutId, validateShout,
 } from '../../src/validate';
 
 describe('cleanText', () => {
@@ -15,6 +15,23 @@ describe('cleanText', () => {
   it('cuts piles of combining marks down to two', () => {
     // q has no precomposed accented forms, so NFC leaves every mark in place.
     expect(cleanText('q\u0301\u0302\u0303\u0304\u0305')).toBe('q\u0301\u0302');
+  });
+
+  it('strips every invisible character: joiners, tags, U+180E, U+034F, variation selectors but FE0F', () => {
+    expect(cleanText('a\u200Db\u200Cc')).toBe('abc');
+    expect(cleanText('flag\u{E0067}\u{E0062}\u{E007F}')).toBe('flag');
+    expect(cleanText('a\u180Eb\u034Fc\uFE00d')).toBe('abcd');
+    expect(cleanText('\u2764\uFE0F')).toBe('\u2764\uFE0F');
+  });
+
+  it('drops blank-looking fillers', () => {
+    expect(cleanText('\u3164')).toBe('');
+    expect(cleanText('hi\u115F\u1160\uFFA0\u2800there')).toBe('hithere');
+  });
+
+  it('repairs lone surrogates', () => {
+    expect(cleanText('a\uD800b')).toBe('a\uFFFDb');
+    expect(cleanText('a\uDC00')).toBe('a\uFFFD');
   });
 
   it('keeps emoji and accents', () => {
@@ -47,15 +64,25 @@ describe('normaliseNick', () => {
     expect(normaliseNick('a'.repeat(17))).toBeNull();
     expect(normaliseNick('a'.repeat(16))).toBe('a'.repeat(16));
   });
+
+  it('drops invisible characters and refuses nicks that are only fillers', () => {
+    expect(normaliseNick('o\u200Dwl')).toBe('owl');
+    expect(normaliseNick('\u3164')).toBeNull();
+    expect(normaliseNick('\u2800\u2800')).toBeNull();
+    expect(normaliseNick('\u200B')).toBeNull();
+  });
 });
 
 describe('isReservedNick', () => {
-  it('reserves Morgan and the obvious stand-ins in any case or leetspeak', () => {
+  it('reserves anything containing Morgan, and the other stand-ins exactly, in any case or leetspeak', () => {
     expect(isReservedNick('Morgan')).toBe(true);
     expect(isReservedNick('m0rg4n')).toBe(true);
     expect(isReservedNick('m.o.r.g.a.n')).toBe(true);
     expect(isReservedNick('admin')).toBe(true);
-    expect(isReservedNick('morgans_friend')).toBe(false);
+    expect(isReservedNick('morgans_friend')).toBe(true);
+    expect(isReservedNick('real.m0rgan')).toBe(true);
+    expect(isReservedNick('administrator')).toBe(false);
+    expect(isReservedNick('night_owl')).toBe(false);
   });
 });
 
@@ -74,7 +101,18 @@ describe('isHoneypot', () => {
     expect(isHoneypot({ website: '   ' })).toBe(false);
     expect(isHoneypot({})).toBe(false);
     expect(isHoneypot({ website: 'http://spam.example' })).toBe(true);
-    expect(isHoneypot({ website: 1 })).toBe(true);
+    expect(isHoneypot({ website: false })).toBe(false);
+    expect(isHoneypot({ website: 0 })).toBe(false);
+    expect(isHoneypot({ website: 1 })).toBe(false);
+    expect(isHoneypot(null)).toBe(false);
+  });
+});
+
+describe('decoyShout', () => {
+  it('echoes the bot\'s own words, cleaned up like a stored shout', () => {
+    expect(decoyShout({ nick: ' spam_bot ', text: ' buy\n\nnow ' })).toEqual({ nick: 'spam_bot', text: 'buy now' });
+    expect(decoyShout({ nick: '<b>', text: 'x'.repeat(300) })).toEqual({ nick: 'guest', text: 'x'.repeat(200) });
+    expect(decoyShout(null)).toEqual({ nick: 'guest', text: '' });
   });
 });
 
@@ -99,6 +137,9 @@ describe('validateShout', () => {
     expect(error([1])).toMatch(/JSON object/);
     expect(error({ nick: 'a' })).toMatch(/Say something/);
     expect(error({ nick: 'a', text: ' \n ' })).toMatch(/Say something/);
+    expect(error({ nick: 'a', text: '\u3164' })).toMatch(/Say something/);
+    expect(error({ nick: 'a', text: '\u200B\u2800\uFE0F' })).toMatch(/Say something/);
+    expect(error({ nick: '\u3164', text: 'hi' })).toMatch(/Nicks are/);
     expect(error({ text: 'hi' })).toMatch(/nick/);
     expect(error({ nick: 'bad nick!', text: 'hi' })).toMatch(/Nicks are/);
   });
@@ -115,6 +156,8 @@ describe('validateShout', () => {
 
   it('turns away blocked words and too many links', () => {
     expect(error({ nick: 'a', text: 'f4gg0t' })).toMatch(/friendly/);
+    expect(error({ nick: 'a', text: 'ki\u200Dke' })).toMatch(/friendly/);
+    expect(ok({ nick: 'socialist', text: 'socialism, specialist' }).nick).toBe('socialist');
     expect(error({ nick: 'f4g', text: 'hi' })).toMatch(/different nick/);
     expect(ok({ nick: 'a', text: 'my site: https://example.com' }).text).toContain('example.com');
     expect(error({ nick: 'a', text: 'https://a.example https://b.example' })).toMatch(/One link/);

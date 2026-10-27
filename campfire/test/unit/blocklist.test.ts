@@ -20,12 +20,15 @@ describe('fold', () => {
 describe('isBlocked', () => {
   it.each([
     'you are a faggot', 'FAGGOT', 'f4gg0t', 'faaaggot', 'f a g', 'n1gg@', 'kikes', 'retarded', 'buy viagra now',
-    'V I A G R A', 'cheapcialisonline', 'check my onlyfans', 'b u y f o l l o w e r s',
+    'V I A G R A', 'cialis', 'cheap cialis', 'check my onlyfans', 'b u y f o l l o w e r s', 'cheapviagraonline',
+    'ki\u200Dke', 'fa\u200Cg', 'n\u{E0041}igger', 'xniggerx',
   ])('blocks %j', text => expect(isBlocked(text)).toBe(true));
 
   it.each([
     'Hello from Scunthorpe', 'Niger is a country', 'the fire retardant worked', 'spicy food', 'nice campfire',
     'a classic', 'I like assessments', 'Shoutout to Morgan', 'what a beautiful sky tonight', 'skidding', '', 'xxx',
+    'socialism', 'a socialist', 'ask a specialist', 'commercialised', 'social issues', 'crucial is it',
+    'the financial is fine', 'snigger', 'sniggering at the back',
   ])('lets %j through', text => expect(isBlocked(text)).toBe(false));
 
   it('is deliberately blunt about whole words', () => {
