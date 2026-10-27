@@ -39,12 +39,24 @@ export const SHOUT_PAGE = 50;
 /** How often the alarm sweeps expired shouts. */
 export const SWEEP_EVERY_MS = DAY;
 
-/** A client counts as "here" if it polled this recently (the site polls every ~20 s). */
+/** A visitor counts as "here" if they polled this recently (the site polls every ~20 s). */
 export const PRESENCE_WINDOW_MS = 60 * SECOND;
+/** The most "here" ever reports. */
+export const MAX_HERE = 99;
 
 /** Per IP: at most one shout per RATE_GAP_MS and RATE_PER_HOUR per hour. */
 export const RATE_GAP_MS = 10 * SECOND;
 export const RATE_PER_HOUR = 20;
+
+/** Everyone together: at most GLOBAL_SHOUTS guest shouts per GLOBAL_WINDOW_MS (a /48 holds 65,536 /64s). */
+export const GLOBAL_SHOUTS = 30;
+export const GLOBAL_WINDOW_MS = 10 * MINUTE;
+
+/** Per IP: at most one counted visit per VISIT_COOLDOWN_MS; more just read the count. */
+export const VISIT_COOLDOWN_MS = 30 * MINUTE;
+
+/** Keep only the newest MAX_ROWS shouts (50 are ever shown), so no query can grow with the table. */
+export const MAX_ROWS = 500;
 
 /** Caps on the in-memory maps, so a flood can't grow them without bound. */
 export const MAX_TRACKED = 10_000;

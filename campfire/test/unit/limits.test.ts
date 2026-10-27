@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { HOUR, SECOND } from '../../src/config';
-import { Presence, RateLimiter, hashSubject, rateSubject, retryAfterSeconds } from '../../src/limits';
+import { HOUR, MINUTE, SECOND } from '../../src/config';
+import {
+  Cooldown, GlobalLimiter, Presence, RateLimiter, hashSubject, rateSubject, retryAfterSeconds, unwrapMappedIPv4,
+} from '../../src/limits';
 
 describe('RateLimiter', () => {
   it('allows one action per 10 s', () => {
@@ -38,6 +40,47 @@ describe('RateLimiter', () => {
   });
 });
 
+describe('GlobalLimiter', () => {
+  it('allows 30 in 10 minutes from everyone together, then says when one ages out', () => {
+    const limiter = new GlobalLimiter();
+    for (let i = 0; i < 30; i++) {
+      expect(limiter.check(i * SECOND).ok).toBe(true);
+      limiter.record(i * SECOND);
+    }
+    expect(limiter.check(30 * SECOND)).toEqual({ ok: false, retryAfterMs: 10 * MINUTE - 30 * SECOND });
+    expect(limiter.check(10 * MINUTE).ok).toBe(true);
+    expect(limiter.size).toBe(29);
+  });
+
+  it('holds no more than its limit of timestamps', () => {
+    const limiter = new GlobalLimiter(3, MINUTE);
+    for (let i = 0; i < 10; i++) limiter.record(i);
+    expect(limiter.size).toBe(3);
+    limiter.prune(MINUTE + 10);
+    expect(limiter.size).toBe(0);
+  });
+});
+
+describe('Cooldown', () => {
+  it('lets a key through once per 30 minutes', () => {
+    const cooldown = new Cooldown();
+    expect(cooldown.hit('a', 0)).toBe(true);
+    expect(cooldown.hit('a', 29 * MINUTE)).toBe(false);
+    expect(cooldown.hit('b', 29 * MINUTE)).toBe(true);
+    expect(cooldown.hit('a', 30 * MINUTE)).toBe(true);
+  });
+
+  it('forgets keys whose cooldown is over, and never tracks more than its cap', () => {
+    const cooldown = new Cooldown(MINUTE, 2);
+    cooldown.hit('a', 0);
+    cooldown.hit('b', 1);
+    cooldown.hit('c', 2);
+    expect(cooldown.size).toBe(2);
+    cooldown.prune(MINUTE + 1);
+    expect(cooldown.size).toBe(1);
+  });
+});
+
 describe('Presence', () => {
   it('counts clients seen in the last minute', () => {
     const presence = new Presence();
@@ -64,9 +107,25 @@ describe('Presence', () => {
   });
 });
 
+describe('unwrapMappedIPv4', () => {
+  it('turns IPv4-mapped IPv6 back into IPv4', () => {
+    expect(unwrapMappedIPv4('::ffff:192.0.2.1')).toBe('192.0.2.1');
+    expect(unwrapMappedIPv4('::FFFF:192.0.2.1')).toBe('192.0.2.1');
+    expect(unwrapMappedIPv4('0:0:0:0:0:ffff:192.0.2.1')).toBe('192.0.2.1');
+    expect(unwrapMappedIPv4('::ffff:c000:201')).toBe('192.0.2.1');
+  });
+
+  it('leaves everything else alone', () => {
+    expect(unwrapMappedIPv4('2001:db8::ffff:1:2')).toBe('2001:db8::ffff:1:2');
+    expect(unwrapMappedIPv4('::1')).toBe('::1');
+    expect(unwrapMappedIPv4('203.0.113.7')).toBe('203.0.113.7');
+  });
+});
+
 describe('rateSubject', () => {
-  it('keeps a whole IPv4 address', () => {
+  it('keeps a whole IPv4 address, mapped or not', () => {
     expect(rateSubject('203.0.113.7')).toBe('203.0.113.7');
+    expect(rateSubject('::ffff:203.0.113.7')).toBe('203.0.113.7');
   });
 
   it('keeps only the /64 of an IPv6 address, however it is written', () => {

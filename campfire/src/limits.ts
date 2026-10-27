@@ -3,7 +3,9 @@
  * ever written to storage; it lives as long as the Durable Object stays in memory and is gone after a
  * few quiet minutes.
  */
-import { HOUR, MAX_TRACKED, PRESENCE_WINDOW_MS, RATE_GAP_MS, RATE_PER_HOUR } from './config';
+import {
+  GLOBAL_SHOUTS, GLOBAL_WINDOW_MS, HOUR, MAX_TRACKED, PRESENCE_WINDOW_MS, RATE_GAP_MS, RATE_PER_HOUR, VISIT_COOLDOWN_MS,
+} from './config';
 
 export type RateDecision = { readonly ok: true } | { readonly ok: false; readonly retryAfterMs: number };
 
@@ -55,7 +57,73 @@ export class RateLimiter {
   }
 }
 
-/** Random per-tab client ids and when each last polled. Counts the ones seen in the last minute. */
+/**
+ * One limit for everyone: at most `limit` actions per rolling `windowMs`, whoever they come from. Holds
+ * only timestamps (at most `limit` of them).
+ */
+export class GlobalLimiter {
+  private times: number[] = [];
+
+  constructor(
+    private readonly limit = GLOBAL_SHOUTS,
+    private readonly windowMs = GLOBAL_WINDOW_MS,
+  ) {}
+
+  check(now: number): RateDecision {
+    this.prune(now);
+    if (this.times.length < this.limit) return { ok: true };
+    return { ok: false, retryAfterMs: this.times[0]! + this.windowMs - now };
+  }
+
+  record(now: number): void {
+    this.prune(now);
+    this.times.push(now);
+    if (this.times.length > this.limit) this.times.splice(0, this.times.length - this.limit);
+  }
+
+  prune(now: number): void {
+    const first = this.times.findIndex(t => now - t < this.windowMs);
+    this.times = first === -1 ? [] : this.times.slice(first);
+  }
+
+  get size(): number {
+    return this.times.length;
+  }
+}
+
+/** At most one hit per `windowMs` per key: the odometer counts an IP once per half hour. */
+export class Cooldown {
+  private readonly last = new Map<string, number>();
+
+  constructor(
+    private readonly windowMs = VISIT_COOLDOWN_MS,
+    private readonly maxTracked = MAX_TRACKED,
+  ) {}
+
+  /** True (and remembered) if `key` hasn't hit in the window; false if it has. */
+  hit(key: string, now: number): boolean {
+    const at = this.last.get(key);
+    if (at !== undefined && now - at < this.windowMs) return false;
+    this.last.delete(key);
+    this.last.set(key, now);
+    while (this.last.size > this.maxTracked) this.last.delete(this.last.keys().next().value!);
+    return true;
+  }
+
+  prune(now: number): void {
+    // Oldest first (hit() re-inserts), so stop at the first one still cooling down.
+    for (const [key, at] of this.last) {
+      if (now - at < this.windowMs) break;
+      this.last.delete(key);
+    }
+  }
+
+  get size(): number {
+    return this.last.size;
+  }
+}
+
+/** Who has polled lately (by hashed IP) and when. Counts the ones seen in the last minute. */
 export class Presence {
   private readonly lastSeen = new Map<string, number>();
 
@@ -93,13 +161,25 @@ export class Presence {
  * one (a single connection is handed a whole /64, so per-address limits would be trivial to dodge).
  */
 export function rateSubject(ip: string): string {
-  const address = ip.trim().toLowerCase();
+  const address = unwrapMappedIPv4(ip.trim().toLowerCase());
   if (!address.includes(':')) return address;
   const [head = '', tail] = address.split('::');
   const left = head ? head.split(':') : [];
   const right = tail ? tail.split(':') : [];
   const groups = tail === undefined ? left : [...left, ...Array<string>(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right];
   return groups.slice(0, 4).map(g => g.replace(/^0+(?=.)/, '') || '0').join(':') + '::/64';
+}
+
+/** `::ffff:192.0.2.1` (or `::ffff:c000:201`) is really an IPv4 address; anything else is returned as is. */
+export function unwrapMappedIPv4(address: string): string {
+  const mapped = /^(?:(?:0{1,4}:){5}|::(?:0{1,4}:)?)ffff:(.+)$/i.exec(address);
+  if (!mapped) return address;
+  const rest = mapped[1]!;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(rest)) return rest;
+  const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(rest);
+  if (!hex) return address;
+  const [hi, lo] = [parseInt(hex[1]!, 16), parseInt(hex[2]!, 16)];
+  return [hi >> 8, hi & 255, lo >> 8, lo & 255].join('.');
 }
 
 /** A one-way, salted hash of the IP's subject, so not even memory holds the address itself. */

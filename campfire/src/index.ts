@@ -4,7 +4,7 @@ import { INSTANCE_NAME, NAME, SOURCE_URL, VERSION } from './config';
 import { preflightHeaders } from './cors';
 import { HttpError, declaredTooLarge, empty, failure, json, readJson } from './http';
 import { retryAfterSeconds } from './limits';
-import { isHoneypot, parseClientId, parseShoutId, validateShout } from './validate';
+import { decoyShout, isHoneypot, parseClientId, parseShoutId, validateShout } from './validate';
 
 export { Campfire };
 
@@ -13,17 +13,21 @@ type Handler = (request: Request, env: Env, url: URL, origin: string | null) => 
 /** The one campfire everyone sits around. */
 const campfire = (env: Env) => env.CAMPFIRE.getByName(INSTANCE_NAME);
 
+/** The visitor's IP, set by Cloudflare. Only ever hashed, in memory, inside the Durable Object. */
+const clientIp = (request: Request): string | null => request.headers.get('CF-Connecting-IP');
+
 const info: Handler = async (_request, _env, _url, origin) =>
   json({ name: NAME, version: VERSION, source: SOURCE_URL, endpoints: ['GET|POST /visit', 'GET|POST /shouts', 'DELETE /shouts/:id', 'GET /host'] }, 200, origin);
 
 const getVisits: Handler = async (_request, env, _url, origin) =>
   json({ count: await campfire(env).visit(false) }, 200, origin);
 
-const addVisit: Handler = async (_request, env, _url, origin) =>
-  json({ count: await campfire(env).visit(true) }, 200, origin);
+/** Counts a visit, at most once per IP per half hour; either way, answers with the count. */
+const addVisit: Handler = async (request, env, _url, origin) =>
+  json({ count: await campfire(env).visit(true, clientIp(request)) }, 200, origin);
 
-const getShouts: Handler = async (_request, env, url, origin) =>
-  json(await campfire(env).shouts(parseClientId(url.searchParams.get('client'))), 200, origin);
+const getShouts: Handler = async (request, env, url, origin) =>
+  json(await campfire(env).shouts(parseClientId(url.searchParams.get('client')), clientIp(request)), 200, origin);
 
 const addShout: Handler = async (request, env, _url, origin) => {
   const who = await checkHost(request.headers.get('Authorization'), env.CAMPFIRE_HOST_KEY);
@@ -31,12 +35,15 @@ const addShout: Handler = async (request, env, _url, origin) => {
 
   const body = await readJson(request);
   // Bots fill in the hidden field. Tell them it worked and keep nothing.
-  if (isHoneypot(body)) return json({ shout: { id: 0, nick: 'guest', text: '', at: new Date().toISOString(), host: false } }, 201, origin);
+  if (isHoneypot(body)) {
+    const id = await campfire(env).nextId();
+    return json({ shout: { id, ...decoyShout(body), at: new Date().toISOString(), host: false } }, 201, origin);
+  }
 
   const checked = validateShout(body, who === 'host');
   if (!checked.ok) return failure(400, checked.error, origin);
 
-  const result = await campfire(env).add(checked.value, request.headers.get('CF-Connecting-IP'));
+  const result = await campfire(env).add(checked.value, clientIp(request));
   if (!result.ok) {
     const seconds = retryAfterSeconds(result.retryAfterMs);
     return failure(429, `Easy there. Try again in ${seconds} s.`, origin, { 'Retry-After': String(seconds) });
@@ -63,8 +70,10 @@ const checkHostKey: Handler = async (request, env, _url, origin) => {
   return who === 'host' ? empty(204, origin) : failure(401, 'That host key doesn\'t work here.', origin);
 };
 
-/** The routes: path, then method. */
-function route(method: string, path: string): Handler | 'wrong-method' | null {
+type Route = Handler | { readonly wrongMethod: string } | null;
+
+/** The routes: path, then method. A known path with the wrong method says which methods it takes. */
+function route(method: string, path: string): Route {
   const table: Record<string, Partial<Record<string, Handler>>> = {
     '/': { GET: info },
     '/visit': { GET: getVisits, POST: addVisit },
@@ -74,7 +83,8 @@ function route(method: string, path: string): Handler | 'wrong-method' | null {
   const byMethod = table[path] ?? (/^\/shouts\/[^/]+$/.test(path) ? { DELETE: removeShout(path.slice('/shouts/'.length)) } : null);
   if (!byMethod) return null;
   // HEAD is answered like GET (the runtime drops the body).
-  return byMethod[method === 'HEAD' ? 'GET' : method] ?? 'wrong-method';
+  const methods = Object.keys(byMethod);
+  return byMethod[method === 'HEAD' ? 'GET' : method] ?? { wrongMethod: [...methods, ...(methods.includes('GET') ? ['HEAD'] : []), 'OPTIONS'].join(', ') };
 }
 
 export default {
@@ -87,7 +97,7 @@ export default {
 
     const handler = route(request.method, path);
     if (handler === null) return failure(404, 'Nothing here.', origin);
-    if (handler === 'wrong-method') return failure(405, 'Not like that.', origin);
+    if ('wrongMethod' in handler) return failure(405, 'Not like that.', origin, { Allow: handler.wrongMethod });
     // No route wants a big body; POST /shouts also counts what actually arrives (readJson).
     if (declaredTooLarge(request)) return failure(413, 'That\'s too long for the campfire.', origin);
 

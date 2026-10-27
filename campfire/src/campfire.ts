@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
-import { SHOUT_PAGE } from './config';
-import { Presence, RateLimiter, hashSubject } from './limits';
+import { MAX_HERE, MAX_ROWS, SHOUT_PAGE } from './config';
+import { Cooldown, GlobalLimiter, Presence, RateLimiter, hashSubject, type RateDecision } from './limits';
 import { expiryCutoff, iso, nextSweep } from './time';
 import type { CleanShout } from './validate';
 
@@ -28,6 +28,12 @@ export type AddResult = { readonly ok: true; readonly shout: Shout } | { readonl
 
 type ShoutRow = { id: number; nick: string; text: string; at: number; host: number };
 
+/** Rows read and written by this object's queries since it woke (what the free plan meters). */
+export interface RowUsage {
+  rowsRead: number;
+  rowsWritten: number;
+}
+
 const toShout = (row: ShoutRow): Shout => ({ id: row.id, nick: row.nick, text: row.text, at: iso(row.at), host: row.host === 1 });
 
 /** While anything is held in memory, check back this often so the object doesn't hibernate and forget it. */
@@ -40,11 +46,19 @@ const KEEP_WARM_MS = 30_000;
  */
 export class Campfire extends DurableObject<Env> {
   private readonly sql: SqlStorage;
+  /** Guest shouts per (hashed) IP. */
   private readonly limiter = new RateLimiter();
+  /** Guest shouts from everyone together, so many IPs can't flood the fire either. */
+  private readonly everyone = new GlobalLimiter();
+  /** Counted visits per (hashed) IP. */
+  private readonly visits = new Cooldown();
+  /** Who's polling the shoutbox, by hashed IP. */
   private readonly presence = new Presence();
   /** Salts the IP hashes; made up fresh each time the object wakes, never stored. */
   private readonly salt = crypto.randomUUID();
   private warmTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Running totals, for tests and the odd log line. In memory only. */
+  readonly usage: RowUsage = { rowsRead: 0, rowsWritten: 0 };
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -67,82 +81,116 @@ export class Campfire extends DurableObject<Env> {
     });
   }
 
-  /** The visit count, plus one first if `increment`. */
-  visit(increment: boolean): number {
+  /**
+   * The visit count, plus one first if `increment` and this IP hasn't been counted in the last half
+   * hour. Without an IP (never the case on Cloudflare) the visit is simply counted.
+   */
+  async visit(increment: boolean, ip: string | null = null): Promise<number> {
+    if (increment && ip) {
+      const now = Date.now();
+      increment = this.visits.hit(await this.hash(ip), now);
+      if (increment) this.keepWarm();
+    }
     if (increment) {
-      return this.sql.exec<{ value: number }>(
+      return this.run<{ value: number }>(
         `INSERT INTO counters (name, value) VALUES ('visits', 1)
          ON CONFLICT (name) DO UPDATE SET value = value + 1
          RETURNING value`,
-      ).one().value;
+      )[0]!.value;
     }
-    return this.sql.exec<{ value: number }>(`SELECT value FROM counters WHERE name = 'visits'`).toArray()[0]?.value ?? 0;
-  }
-
-  /** The newest shouts still burning, oldest first, and how many tabs have looked in the last minute. */
-  shouts(client: string | null): ShoutLog {
-    const now = Date.now();
-    if (client) {
-      this.presence.see(client, now);
-      this.keepWarm();
-    }
-    const rows = this.sql.exec<ShoutRow>(
-      'SELECT id, nick, text, at, host FROM shouts WHERE at >= ? ORDER BY id DESC LIMIT ?',
-      expiryCutoff(now),
-      SHOUT_PAGE,
-    ).toArray();
-    return { shouts: rows.reverse().map(toShout), here: this.presence.count(now) };
+    return this.run<{ value: number }>(`SELECT value FROM counters WHERE name = 'visits'`)[0]?.value ?? 0;
   }
 
   /**
-   * Stores an already-validated shout, unless this IP has said too much lately. The host isn't rate
-   * limited. `ip` is only hashed, in memory.
+   * The newest shouts still burning, oldest first, and how many visitors have looked in the last
+   * minute. A visitor is a (hashed) IP, so one person's many tabs count once and made-up client ids
+   * count for nothing; a valid `client` id is still needed to be counted, as before.
+   */
+  async shouts(client: string | null, ip: string | null = null): Promise<ShoutLog> {
+    const now = Date.now();
+    if (client && ip) {
+      this.presence.see(await this.hash(ip), now);
+      this.keepWarm();
+    }
+    const rows = this.run<ShoutRow>(
+      'SELECT id, nick, text, at, host FROM shouts WHERE at >= ? ORDER BY id DESC LIMIT ?',
+      expiryCutoff(now),
+      SHOUT_PAGE,
+    );
+    return { shouts: rows.reverse().map(toShout), here: Math.min(this.presence.count(now), MAX_HERE) };
+  }
+
+  /**
+   * Stores an already-validated shout, unless this IP, or everyone together, has said too much lately.
+   * The host isn't limited. `ip` is only hashed, in memory; without one (never the case on Cloudflare)
+   * only the limit for everyone applies.
    */
   async add(shout: CleanShout, ip: string | null): Promise<AddResult> {
     const now = Date.now();
-    let key: string | null = null;
+    const key = !shout.host && ip ? await this.hash(ip) : null;
     if (!shout.host) {
-      key = await hashSubject(ip ?? 'unknown', this.salt);
-      const decision = this.limiter.check(key, now);
+      const decision = firstRefusal(key ? this.limiter.check(key, now) : { ok: true }, this.everyone.check(now));
       if (!decision.ok) return decision;
     }
-    this.sweep(now);
-    const row = this.sql.exec<ShoutRow>(
+    const row = this.run<ShoutRow>(
       'INSERT INTO shouts (nick, text, at, host) VALUES (?, ?, ?, ?) RETURNING id, nick, text, at, host',
       shout.nick,
       shout.text,
       now,
       shout.host ? 1 : 0,
-    ).one();
-    if (key) {
-      this.limiter.record(key, now);
+    )[0]!;
+    // Keep the newest MAX_ROWS by id: an index range, so it reads only what it deletes (usually one row).
+    this.run('DELETE FROM shouts WHERE id <= ?', row.id - MAX_ROWS);
+    if (!shout.host) {
+      if (key) this.limiter.record(key, now);
+      this.everyone.record(now);
       this.keepWarm();
     }
     return { ok: true, shout: toShout(row) };
   }
 
-  /** Takes a shout down. False if there was no such shout. */
-  remove(id: number): boolean {
-    return this.sql.exec('DELETE FROM shouts WHERE id = ?', id).rowsWritten > 0;
+  /** What the next shout's id will probably be (for the honeypot's convincing fake). */
+  nextId(): number {
+    return (this.run<{ seq: number }>(`SELECT seq FROM sqlite_sequence WHERE name = 'shouts'`)[0]?.seq ?? 0) + 1;
   }
 
-  /** The daily sweep: the fire burns down. */
+  /** Takes a shout down. False if there was no such shout. */
+  remove(id: number): boolean {
+    const cursor = this.sql.exec('DELETE FROM shouts WHERE id = ?', id);
+    this.tally(cursor);
+    return cursor.rowsWritten > 0;
+  }
+
+  /** The daily sweep: the fire burns down. The one query that reads the whole (capped) table. */
   override async alarm(): Promise<void> {
     const now = Date.now();
-    const removed = this.sweep(now);
-    if (removed) console.log(`sweep: ${removed} expired shout(s) removed`);
+    const cursor = this.sql.exec('DELETE FROM shouts WHERE at < ?', expiryCutoff(now));
+    this.tally(cursor);
+    if (cursor.rowsWritten) console.log(`sweep: ${cursor.rowsWritten} expired shout(s) removed`);
     await this.ctx.storage.setAlarm(nextSweep(now));
   }
 
-  /** Deletes shouts past their week. Returns how many went. */
-  private sweep(now: number): number {
-    return this.sql.exec('DELETE FROM shouts WHERE at < ?', expiryCutoff(now)).rowsWritten;
+  /** Runs a query to completion and adds its row counts to `usage`. */
+  private run<T extends Record<string, SqlStorageValue>>(query: string, ...bindings: unknown[]): T[] {
+    const cursor = this.sql.exec<T>(query, ...bindings);
+    const rows = cursor.toArray();
+    this.tally(cursor);
+    return rows;
+  }
+
+  private tally(cursor: { rowsRead: number; rowsWritten: number }): void {
+    this.usage.rowsRead += cursor.rowsRead;
+    this.usage.rowsWritten += cursor.rowsWritten;
+  }
+
+  private hash(ip: string): Promise<string> {
+    return hashSubject(ip, this.salt);
   }
 
   /**
-   * Keeps a timer pending while presence or rate limits hold anything: a pending timer stops the object
-   * hibernating after 10 idle seconds, which would wipe them. It is still evicted a minute or two after
-   * the last request, so the hourly limit only holds while people are around (the 10 s one always
+   * Keeps a timer pending while anything is held in memory: a pending timer stops the object
+   * hibernating after 10 idle seconds, which would wipe it. It is still evicted a minute or two after
+   * the last request, so the longer limits only hold while people are around (the 10 s one always
    * does). There is one object, so even kept in memory all day it stays inside the free plan's duration.
    */
   private keepWarm(): void {
@@ -152,7 +200,16 @@ export class Campfire extends DurableObject<Env> {
       const now = Date.now();
       this.presence.prune(now);
       this.limiter.prune(now);
-      if (this.presence.size || this.limiter.size) this.keepWarm();
+      this.everyone.prune(now);
+      this.visits.prune(now);
+      if (this.presence.size || this.limiter.size || this.everyone.size || this.visits.size) this.keepWarm();
     }, KEEP_WARM_MS);
   }
+}
+
+/** The refusal with the longest wait, or ok if neither refuses. */
+function firstRefusal(a: RateDecision, b: RateDecision): RateDecision {
+  if (a.ok) return b;
+  if (b.ok) return a;
+  return a.retryAfterMs >= b.retryAfterMs ? a : b;
 }

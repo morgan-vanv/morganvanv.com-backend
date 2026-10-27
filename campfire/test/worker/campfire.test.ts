@@ -19,7 +19,8 @@ function call(path: string, init: RequestInit & { ip?: string; key?: string } = 
 }
 
 const shout = (body: object, ip: string, key?: string) => call('/shouts', { method: 'POST', body: JSON.stringify(body), ip, key });
-const log = async (client?: string) => (await (await call(`/shouts${client ? `?client=${client}` : ''}`)).json()) as ShoutLog;
+const log = async (client?: string, ip?: string) => (await (await call(`/shouts${client ? `?client=${client}` : ''}`, { ip })).json()) as ShoutLog;
+const count = async (method = 'GET', ip?: string) => ((await (await call('/visit', { method, ip })).json()) as { count: number }).count;
 const stub = () => env.CAMPFIRE.getByName('campfire');
 
 describe('the campfire Worker', () => {
@@ -30,9 +31,17 @@ describe('the campfire Worker', () => {
   });
 
   it('counts visits, and only when asked to', async () => {
-    const before = ((await (await call('/visit')).json()) as { count: number }).count;
-    expect(await (await call('/visit', { method: 'POST' })).json()).toEqual({ count: before + 1 });
-    expect(await (await call('/visit')).json()).toEqual({ count: before + 1 });
+    const before = await count();
+    expect(await count('POST', '203.0.113.1')).toBe(before + 1);
+    expect(await count()).toBe(before + 1);
+  });
+
+  it('counts an IP once per half hour, however often it posts', async () => {
+    const before = await count();
+    expect(await count('POST', '203.0.113.2')).toBe(before + 1);
+    expect(await count('POST', '203.0.113.2')).toBe(before + 1);
+    expect(await count('POST', '::ffff:203.0.113.2')).toBe(before + 1);
+    expect(await count('POST', '203.0.113.3')).toBe(before + 2);
   });
 
   it('answers preflights for the site and nobody else', async () => {
@@ -58,10 +67,12 @@ describe('the campfire Worker', () => {
   });
 
   it('pretends to take a honeypot shout and keeps nothing', async () => {
-    const before = (await log()).shouts.length;
-    const response = await shout({ nick: 'bot', text: 'spam', website: 'http://spam.example' }, '198.51.100.2');
+    const before = (await log()).shouts;
+    const response = await shout({ nick: ' bot ', text: ' buy \n stuff ', website: 'http://spam.example' }, '198.51.100.2');
     expect(response.status).toBe(201);
-    expect((await log()).shouts.length).toBe(before);
+    const { shout: fake } = (await response.json()) as { shout: Shout };
+    expect(fake).toMatchObject({ id: before.at(-1)!.id + 1, nick: 'bot', text: 'buy stuff', host: false });
+    expect((await log()).shouts).toEqual(before);
   });
 
   it('rate limits per IP: once per 10 s', async () => {
@@ -107,13 +118,21 @@ describe('the campfire Worker', () => {
     expect((await shout({ nick: 'a', text: 'hi' }, '198.51.100.7', 'nope')).status).toBe(401);
   });
 
-  it('counts who is here by client id, once each', async () => {
+  it('counts who is here by IP, once each, however many tabs or ids', async () => {
     const before = (await log()).here;
-    await log('client-aaaa-0001');
-    await log('client-aaaa-0001');
-    const after = await log('client-bbbb-0002');
+    await log('client-aaaa-0001', '192.0.2.1');
+    await log('client-aaaa-0002', '192.0.2.1');
+    await log('client-made-up-03', '192.0.2.1');
+    const after = await log('client-bbbb-0002', '192.0.2.2');
     expect(after.here).toBe(before + 2);
-    expect((await log('bad id')).here).toBe(before + 2);
+    expect((await log('bad id', '192.0.2.3')).here).toBe(before + 2);
+    expect((await log(undefined, '192.0.2.4')).here).toBe(before + 2);
+  });
+
+  it('answers a wrong method with what the path takes', async () => {
+    const response = await call('/visit', { method: 'PUT' });
+    expect(response.status).toBe(405);
+    expect(response.headers.get('Allow')).toBe('GET, POST, HEAD, OPTIONS');
   });
 
   it('lets the fire burn down: the alarm sweeps week-old shouts', async () => {
@@ -131,6 +150,23 @@ describe('the campfire Worker', () => {
     expect(next).toBeGreaterThan(Date.now() + DAY - 60_000);
   });
 
+  it('keeps the table capped, and a shout costs a handful of rows however full it is', async () => {
+    // Fill well past the cap as the host (not rate limited).
+    const usage = await runInDurableObject(stub(), async (instance: Campfire) => {
+      for (let i = 0; i < 600; i++) await instance.add({ nick: 'morgan', text: `filler ${i}`, host: true }, null);
+      const before = { ...instance.usage };
+      const result = await instance.add({ nick: 'owl', text: 'one more', host: false }, '198.51.100.99');
+      expect(result.ok).toBe(true);
+      return { rowsRead: instance.usage.rowsRead - before.rowsRead, rowsWritten: instance.usage.rowsWritten - before.rowsWritten };
+    });
+    const rows = await runInDurableObject(stub(), (_instance: Campfire, state) =>
+      state.storage.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM shouts').one().n);
+    expect(rows).toBe(500);
+    // Insert (+ sqlite_sequence) and delete the one row that fell off the end: nothing scans the table.
+    expect(usage.rowsWritten).toBeLessThanOrEqual(4);
+    expect(usage.rowsRead).toBeLessThanOrEqual(4);
+  });
+
   it('stores nothing about visitors: just the count and the shouts', async () => {
     const tables = await runInDurableObject(stub(), (_instance: Campfire, state) =>
       state.storage.sql.exec<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' AND name NOT LIKE 'sqlite%'`).toArray().map(r => r.name).sort());
@@ -138,5 +174,21 @@ describe('the campfire Worker', () => {
     const columns = await runInDurableObject(stub(), (_instance: Campfire, state) =>
       state.storage.sql.exec<{ name: string }>(`SELECT name FROM pragma_table_info('shouts')`).toArray().map(r => r.name));
     expect(columns).toEqual(['id', 'nick', 'text', 'at', 'host']);
+    // ...and nothing in the key-value API either (it lives in the hidden _cf_KV table).
+    const kv = await runInDurableObject(stub(), async (_instance: Campfire, state) => (await state.storage.list()).size);
+    expect(kv).toBe(0);
+  });
+
+  // Last: it spends the shared budget.
+  it('limits guest shouts from everyone together, whatever their IPs', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 40; i++) statuses.push((await shout({ nick: `g${i}`, text: `flood ${i}` }, `2001:db8:${i.toString(16)}::1`)).status);
+    expect(statuses).toContain(429);
+    expect(statuses.filter(s => s === 201).length).toBeLessThanOrEqual(30);
+    const refused = await shout({ nick: 'late', text: 'hello?' }, '2001:db8:ffff::1');
+    expect(refused.status).toBe(429);
+    expect(Number(refused.headers.get('Retry-After'))).toBeGreaterThan(0);
+    // The host still gets through.
+    expect((await shout({ text: 'still here' }, '2001:db8:ffff::1', 'test-host-key')).status).toBe(201);
   });
 });
