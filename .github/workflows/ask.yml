@@ -1,0 +1,36 @@
+# Ask Morgan (packages/ask/ and test/): run its tests on every PR into main, so the ruleset can require them.
+#
+# No path filter on purpose: a required check that never reports would block PRs that don't touch it.
+# The run takes a few seconds. Actions are pinned to full commit SHAs, as in the campfire's workflow;
+# Dependabot keeps them current.
+name: Ask Morgan
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ask-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Ask tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          # The functions' runtime on DigitalOcean (nodejs:24 in project.yml once #4 lands).
+          node-version: 24
+          package-manager-cache: false
+      # The tests need no npm packages; Node's own test runner finds test/*.test.js.
+      - run: node --test
