@@ -2,13 +2,14 @@ import { checkHost } from './auth';
 import { Campfire, type Env } from './campfire';
 import { INSTANCE_NAME, NAME, SOURCE_URL, VERSION } from './config';
 import { preflightHeaders } from './cors';
+import { sendPing, webhookUrl } from './discord';
 import { HttpError, declaredTooLarge, empty, failure, json, readJson } from './http';
 import { retryAfterSeconds } from './limits';
 import { decoyShout, isHoneypot, parseClientId, parseShoutId, validateShout } from './validate';
 
 export { Campfire };
 
-type Handler = (request: Request, env: Env, url: URL, origin: string | null) => Promise<Response>;
+type Handler = (request: Request, env: Env, url: URL, origin: string | null, ctx: ExecutionContext) => Promise<Response>;
 
 /** The one campfire everyone sits around. */
 const campfire = (env: Env) => env.CAMPFIRE.getByName(INSTANCE_NAME);
@@ -17,7 +18,7 @@ const campfire = (env: Env) => env.CAMPFIRE.getByName(INSTANCE_NAME);
 const clientIp = (request: Request): string | null => request.headers.get('CF-Connecting-IP');
 
 const info: Handler = async (_request, _env, _url, origin) =>
-  json({ name: NAME, version: VERSION, source: SOURCE_URL, endpoints: ['GET|POST /visit', 'GET|POST /shouts', 'DELETE /shouts/:id', 'GET /host'] }, 200, origin);
+  json({ name: NAME, version: VERSION, source: SOURCE_URL, endpoints: ['GET|POST /visit', 'GET|POST /shouts', 'DELETE /shouts/:id', 'GET|PUT /fire', 'GET /host'] }, 200, origin);
 
 const getVisits: Handler = async (_request, env, _url, origin) =>
   json({ count: await campfire(env).visit(false) }, 200, origin);
@@ -29,7 +30,7 @@ const addVisit: Handler = async (request, env, _url, origin) =>
 const getShouts: Handler = async (request, env, url, origin) =>
   json(await campfire(env).shouts(parseClientId(url.searchParams.get('client')), clientIp(request)), 200, origin);
 
-const addShout: Handler = async (request, env, _url, origin) => {
+const addShout: Handler = async (request, env, _url, origin, ctx) => {
   const who = await checkHost(request.headers.get('Authorization'), env.CAMPFIRE_HOST_KEY);
   if (who === 'wrong-key' || who === 'host-off') return failure(401, 'That host key doesn\'t work here.', origin);
 
@@ -44,11 +45,32 @@ const addShout: Handler = async (request, env, _url, origin) => {
   if (!checked.ok) return failure(400, checked.error, origin);
 
   const result = await campfire(env).add(checked.value, clientIp(request));
+  if (!result.ok && 'closed' in result) return failure(423, 'The fire\'s banked for now. Try again later.', origin);
   if (!result.ok) {
     const seconds = retryAfterSeconds(result.retryAfterMs);
     return failure(429, `Easy there. Try again in ${seconds} s.`, origin, { 'Retry-After': String(seconds) });
   }
+  // Ping Morgan's Discord after answering, so a slow or failing webhook never touches the shout.
+  const webhook = webhookUrl(env.DISCORD_WEBHOOK_URL);
+  if (webhook && result.ping) ctx.waitUntil(sendPing(webhook, result.shout));
   return json({ shout: result.shout }, 201, origin);
+};
+
+/** Whether the fire is open: `{ "open": true }`. Anyone may ask (GET /shouts says it too). */
+const getFire: Handler = async (_request, env, _url, origin) => json({ open: await campfire(env).isOpen() }, 200, origin);
+
+/**
+ * The host banks the fire (`{ "open": false }`: guests can still read, but not shout) or opens it again
+ * (`{ "open": true }`). Nothing is deleted either way. Answers with the new state.
+ */
+const setFire: Handler = async (request, env, _url, origin) => {
+  const who = await checkHost(request.headers.get('Authorization'), env.CAMPFIRE_HOST_KEY);
+  if (who === 'host-off') return failure(404, 'Nothing here.', origin);
+  if (who !== 'host') return failure(401, 'Only the host can do that.', origin);
+  const body = await readJson(request);
+  const open = (body as { open?: unknown } | null)?.open;
+  if (typeof open !== 'boolean') return failure(400, 'Send { "open": true } or { "open": false }.', origin);
+  return json({ open: await campfire(env).setOpen(open) }, 200, origin);
 };
 
 const removeShout = (rawId: string): Handler => async (request, env, _url, origin) => {
@@ -78,6 +100,7 @@ function route(method: string, path: string): Route {
     '/': { GET: info },
     '/visit': { GET: getVisits, POST: addVisit },
     '/shouts': { GET: getShouts, POST: addShout },
+    '/fire': { GET: getFire, PUT: setFire },
     '/host': { GET: checkHostKey },
   };
   const byMethod = table[path] ?? (/^\/shouts\/[^/]+$/.test(path) ? { DELETE: removeShout(path.slice('/shouts/'.length)) } : null);
@@ -88,7 +111,7 @@ function route(method: string, path: string): Route {
 }
 
 export default {
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
     const origin = request.headers.get('Origin');
     const path = url.pathname.replace(/\/+$/, '') || '/';
@@ -102,7 +125,7 @@ export default {
     if (declaredTooLarge(request)) return failure(413, 'That\'s too long for the campfire.', origin);
 
     try {
-      return await handler(request, env, url, origin);
+      return await handler(request, env, url, origin, ctx);
     } catch (error) {
       if (error instanceof HttpError) return failure(error.status, error.message, origin);
       console.error('campfire error', error instanceof Error ? error.stack ?? error.message : error);

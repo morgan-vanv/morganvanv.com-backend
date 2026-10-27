@@ -135,19 +135,66 @@ describe('the campfire Worker', () => {
     expect(response.headers.get('Allow')).toBe('GET, POST, HEAD, OPTIONS');
   });
 
-  it('lets the fire burn down: the alarm sweeps week-old shouts', async () => {
+  it('lets the fire burn down after a month, but always keeps the newest 20', async () => {
+    // 25 shouts from 40 days ago: the newest 20 of them stay, however old.
     await runInDurableObject(stub(), (_instance: Campfire, state) => {
-      state.storage.sql.exec('INSERT INTO shouts (nick, text, at, host) VALUES (?, ?, ?, 0)', 'old', 'ashes', Date.now() - 8 * DAY);
+      for (let i = 0; i < 25; i++) {
+        state.storage.sql.exec('INSERT INTO shouts (nick, text, at, host) VALUES (?, ?, ?, 0)', 'old', `ember ${i}`, Date.now() - 40 * DAY);
+      }
     });
-    expect((await log()).shouts.some(s => s.text === 'ashes')).toBe(false);
+    const embers = (shouts: Shout[]) => shouts.filter(s => s.text.startsWith('ember ')).map(s => s.text);
+    expect(embers((await log()).shouts)).toEqual(Array.from({ length: 20 }, (_, i) => `ember ${i + 5}`));
+    const stored = () => runInDurableObject(stub(), (_instance: Campfire, state) =>
+      state.storage.sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM shouts WHERE text LIKE 'ember %'`).one().n);
 
     expect(await runDurableObjectAlarm(stub())).toBe(true);
-    const left = await runInDurableObject(stub(), (_instance: Campfire, state) =>
-      state.storage.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM shouts WHERE text = ?', 'ashes').one().n);
-    expect(left).toBe(0);
-    // ...and sets itself again for tomorrow.
+    expect(await stored()).toBe(20);
+
+    // Once 20 newer shouts are said, the old ones are past keeping.
+    await runInDurableObject(stub(), async (instance: Campfire) => {
+      for (let i = 0; i < 20; i++) await instance.add({ nick: 'morgan', text: `fresh ${i}`, host: true }, null);
+    });
+    expect(embers((await log()).shouts)).toEqual([]);
+    expect(await runDurableObjectAlarm(stub())).toBe(true);
+    expect(await stored()).toBe(0);
+    // ...and the alarm sets itself again for tomorrow.
     const next = await runInDurableObject(stub(), (_instance: Campfire, state) => state.storage.getAlarm());
     expect(next).toBeGreaterThan(Date.now() + DAY - 60_000);
+  });
+
+  it('lets the host bank the fire: guests can read but not shout, and nothing is lost', async () => {
+    expect((await call('/fire')).status).toBe(200);
+    expect(await (await call('/fire')).json()).toEqual({ open: true });
+    const bank = (open: unknown, key?: string) => call('/fire', { method: 'PUT', body: JSON.stringify({ open }), key });
+    expect((await bank(false)).status).toBe(401);
+    expect((await bank(false, 'wrong')).status).toBe(401);
+    expect((await bank('no', 'test-host-key')).status).toBe(400);
+    const before = (await log()).shouts;
+
+    const banked = await bank(false, 'test-host-key');
+    expect(banked.status).toBe(200);
+    expect(await banked.json()).toEqual({ open: false });
+    expect((await log()).open).toBe(false);
+    expect((await log()).shouts).toEqual(before);
+    const refused = await shout({ nick: 'owl', text: 'anyone?' }, '198.51.100.20');
+    expect(refused.status).toBe(423);
+    expect(await refused.json()).toEqual({ error: 'The fire\'s banked for now. Try again later.' });
+    // The host can still speak.
+    const host = await shout({ text: 'back soon' }, '198.51.100.20', 'test-host-key');
+    expect(host.status).toBe(201);
+
+    expect(await (await bank(true, 'test-host-key')).json()).toEqual({ open: true });
+    expect((await log()).open).toBe(true);
+    expect((await shout({ nick: 'owl', text: 'anyone?' }, '198.51.100.20')).status).toBe(201);
+  });
+
+  it('pings Discord for guests only, and only so often', async () => {
+    const pings = await runInDurableObject(stub(), async (instance: Campfire) => {
+      const host = await instance.add({ nick: 'morgan', text: 'mine', host: true }, null);
+      const guest = await instance.add({ nick: 'owl', text: 'hi', host: false }, '198.51.100.30');
+      return [host.ok && host.ping, guest.ok && guest.ping];
+    });
+    expect(pings).toEqual([false, true]);
   });
 
   it('keeps the table capped, and a shout costs a handful of rows however full it is', async () => {
@@ -171,6 +218,7 @@ describe('the campfire Worker', () => {
     const tables = await runInDurableObject(stub(), (_instance: Campfire, state) =>
       state.storage.sql.exec<{ name: string }>(`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_%' ESCAPE '\\' AND name NOT LIKE 'sqlite%'`).toArray().map(r => r.name).sort());
     expect(tables).toEqual(['counters', 'shouts']);
+    // counters holds the visit count and, while banked, a flag: nothing per visitor.
     const columns = await runInDurableObject(stub(), (_instance: Campfire, state) =>
       state.storage.sql.exec<{ name: string }>(`SELECT name FROM pragma_table_info('shouts')`).toArray().map(r => r.name));
     expect(columns).toEqual(['id', 'nick', 'text', 'at', 'host']);

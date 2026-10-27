@@ -28,7 +28,7 @@ describe('preflightHeaders', () => {
   it('allows the methods and headers the site uses', () => {
     const headers = preflightHeaders('http://localhost:4200');
     expect(headers['Access-Control-Allow-Origin']).toBe('http://localhost:4200');
-    expect(headers['Access-Control-Allow-Methods']).toBe('GET, POST, DELETE, OPTIONS');
+    expect(headers['Access-Control-Allow-Methods']).toBe('GET, POST, PUT, DELETE, OPTIONS');
     expect(headers['Access-Control-Allow-Headers']).toBe('Content-Type, Authorization');
   });
 

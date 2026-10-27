@@ -54,6 +54,14 @@ run "DELETE /shouts/$ID wrong key"   -X DELETE "$B/shouts/$ID" -H "$O" -H 'Autho
 run "DELETE /shouts/$ID host"        -X DELETE "$B/shouts/$ID" -H "$O" -H "$K"
 run "DELETE /shouts/$ID host (again)" -X DELETE "$B/shouts/$ID" -H "$O" -H "$K"
 run 'DELETE /shouts/abc host'        -X DELETE "$B/shouts/abc" -H "$O" -H "$K"
+run 'GET /fire'                      "$B/fire" -H "$O"
+run 'PUT /fire no key'               -X PUT "$B/fire" -H "$O" -H "$J" -d '{"open":false}'
+run 'PUT /fire not a boolean (host)' -X PUT "$B/fire" -H "$O" -H "$J" -H "$K" -d '{"open":"no"}'
+run 'PUT /fire bank it (host)'       -X PUT "$B/fire" -H "$O" -H "$J" -H "$K" -d '{"open":false}'
+run 'POST /shouts while banked (423)' -X POST "$B/shouts" -H "$O" -H "$J" -H 'CF-Connecting-IP: 198.51.100.5' -d '{"nick":"owl","text":"anyone?"}'
+run 'POST /shouts host while banked' -X POST "$B/shouts" -H "$O" -H "$J" -H "$K" -d '{"text":"back soon"}'
+run 'GET /shouts (open:false)'       "$B/shouts" -H "$O"
+run 'PUT /fire open it (host)'       -X PUT "$B/fire" -H "$O" -H "$J" -H "$K" -d '{"open":true}'
 run 'GET /shouts (final)'            "$B/shouts?client=dddddddd-4444" -H "$O" -H 'CF-Connecting-IP: 198.51.100.4'
 run 'PUT /visit'                     -X PUT "$B/visit" -H "$O"
 run 'GET /nope'                      "$B/nope" -H "$O"

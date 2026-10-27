@@ -5,8 +5,8 @@
 #
 # Deploying needs two secrets in the production environment, CLOUDFLARE_API_TOKEN and
 # CLOUDFLARE_ACCOUNT_ID (see campfire/README.md, "Setting it up"). Until both exist the deploy is skipped with a notice, so the
-# workflow stays green. CAMPFIRE_HOST_KEY is optional: when set it becomes the Worker's secret of the same
-# name and turns on host posting and deleting.
+# workflow stays green. CAMPFIRE_HOST_KEY and DISCORD_WEBHOOK_URL are optional: each, when set, becomes the
+# Worker's secret of the same name (host posting, deleting and banking; a Discord ping per guest shout).
 name: Campfire
 
 on:
@@ -62,6 +62,7 @@ jobs:
     env:
       HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
       HAS_HOST_KEY: ${{ secrets.CAMPFIRE_HOST_KEY != '' }}
+      HAS_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL != '' }}
     steps:
       - name: Check for Cloudflare secrets
         if: env.HAS_CLOUDFLARE != 'true'
@@ -85,6 +86,18 @@ jobs:
       - run: npm ci
         if: env.HAS_CLOUDFLARE == 'true'
 
+      # Only the optional secrets that exist are uploaded (an empty one would fail the upload).
+      - name: Which secrets to upload
+        id: secrets
+        if: env.HAS_CLOUDFLARE == 'true'
+        run: |
+          {
+            echo 'names<<EOF'
+            if [ "$HAS_HOST_KEY" = 'true' ]; then echo CAMPFIRE_HOST_KEY; fi
+            if [ "$HAS_WEBHOOK" = 'true' ]; then echo DISCORD_WEBHOOK_URL; fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Deploy to Cloudflare
         id: deploy
         if: env.HAS_CLOUDFLARE == 'true'
@@ -94,12 +107,12 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: campfire
           command: deploy
-          # Only upload the host key when there is one (an empty secret would fail the upload). On the very
-          # first run wrangler-action uploads it before deploying, so Wrangler makes a placeholder Worker to
-          # hold it and the deploy replaces that a moment later.
-          secrets: ${{ env.HAS_HOST_KEY == 'true' && 'CAMPFIRE_HOST_KEY' || '' }}
+          # On the very first run wrangler-action uploads the secrets before deploying, so Wrangler makes a
+          # placeholder Worker to hold them and the deploy replaces that a moment later.
+          secrets: ${{ steps.secrets.outputs.names }}
         env:
           CAMPFIRE_HOST_KEY: ${{ secrets.CAMPFIRE_HOST_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
       - name: Say hello
         if: env.HAS_CLOUDFLARE == 'true' && steps.deploy.outputs.deployment-url != ''

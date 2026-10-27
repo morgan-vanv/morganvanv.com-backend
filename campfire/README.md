@@ -3,7 +3,8 @@
 The small backend behind two things on [morganvanv.com](https://morganvanv.com):
 
 - **The odometer**: the visitor counter badge on `/now`.
-- **The shoutbox**: the IRC-style log on `/social`. Messages burn down after a week.
+- **The shoutbox**: the IRC-style log on `/social`. Messages burn down after 30 days, but
+  the newest 20 always stay, so a quiet month never leaves it empty.
 
 It's one [Cloudflare Worker](https://developers.cloudflare.com/workers/) in front of one
 [SQLite-backed Durable Object](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
@@ -17,7 +18,7 @@ campfire/
   src/limits.ts      rate limits + "here"    src/cors.ts       allowed origins
   src/auth.ts        the host key            src/http.ts       JSON, size limits
   src/time.ts        expiry maths            src/config.ts     every number above
-  src/chars.ts       invisible characters
+  src/chars.ts       invisible characters    src/discord.ts    the optional Discord ping
   test/unit/         the pure modules, in plain Node
   test/worker/       the whole Worker + Durable Object, in workerd (offline)
   scripts/smoke.sh   curl checks against `npm run dev`
@@ -30,12 +31,14 @@ Responses are JSON (`Cache-Control: no-store`), except the empty `204`s. Errors 
 
 | Method & path | What it does | Response |
 | --- | --- | --- |
-| `GET /` | Name and version. | `200 { "name": "campfire", "version": "1.0.0", "source": "…", "endpoints": [ … ] }` |
+| `GET /` | Name and version. | `200 { "name": "campfire", "version": "1.1.0", "source": "…", "endpoints": [ … ] }` |
 | `GET /visit` | Reads the count. | `200 { "count": 1234 }` |
 | `POST /visit` | Adds one (at most once per IP per 30 min) and reads it. No body. | `200 { "count": 1235 }` |
-| `GET /shouts?client=<id>` | The newest 50 shouts from the last 7 days, oldest first, and how many visitors are watching. | `200 { "shouts": [Shout], "here": 3 }` |
-| `POST /shouts` | Says something. Body: `{ "nick", "text", "website" }`. | `201 { "shout": Shout }` |
+| `GET /shouts?client=<id>` | The newest 50 shouts still burning (from the last 30 days, plus always the newest 20), oldest first; how many visitors are watching; whether guests can shout. | `200 { "shouts": [Shout], "here": 3, "open": true }` |
+| `POST /shouts` | Says something. Body: `{ "nick", "text", "website" }`. | `201 { "shout": Shout }`; `423` while the fire is banked (guests only) |
 | `DELETE /shouts/<id>` | Host only: takes a shout down. | `204`, or `404` if it's already gone |
+| `GET /fire` | Is the fire open (can guests shout)? | `200 { "open": true }` |
+| `PUT /fire` | Host only: bank the fire (`{ "open": false }`) or open it (`{ "open": true }`). Nothing is deleted. | `200 { "open": false }`; `400` without a boolean; `401` without the host key; `404` with host features off |
 | `GET /host` | Is the bearer token the host key? The site asks before keeping a key. | `204` yes, `401` no, `404` with host features off |
 | `OPTIONS *` | CORS preflight. | `204` |
 
@@ -78,7 +81,9 @@ it gets the shouts and isn't counted. Two people behind one IP (a household, an 
   IPv4-mapped addresses (`::ffff:a.b.c.d`) as the IPv4 address. A request without `CF-Connecting-IP`
   (never the case on Cloudflare) skips the per-IP limits but not the one for everyone.
 - **At most 500 shouts are kept** (only 50 are ever shown): each new shout deletes whatever falls off the
-  end, by id, so no request reads more rows as the table grows. The daily alarm removes week-old ones.
+  end, by id, so no request reads more rows as the table grows. The daily alarm removes shouts older
+  than 30 days, except the newest 20, which stay however old (`SHOUT_TTL_MS`, `KEEP_NEWEST` in
+  `src/config.ts`; changing either is a one-line change and a deploy).
 
 **The host.** Requests with `Authorization: Bearer <CAMPFIRE_HOST_KEY>` post as `morgan` with
 `host: true` (shown in gold), aren't rate limited or filtered, and may `DELETE /shouts/<id>`. A wrong key
@@ -86,8 +91,22 @@ gets `401`. Keys are compared in constant time (both sides hashed, every byte co
 `CAMPFIRE_HOST_KEY` secret isn't set, host features are off: any key is refused and `DELETE` is a `404`.
 On the site, Morgan visits `/social/#host=<key>` once; the key stays in his browser's localStorage.
 
+**Banking the fire.** The host can close the shoutbox for a while (`PUT /fire` with `{ "open": false }`),
+say if it's being spammed while he's away: guests can still read it, but a guest shout gets
+`423 { "error": "The fire's banked for now. Try again later." }`. The host can still post. `{ "open": true }`
+opens it again. Nothing is deleted either way; the flag is one row in the `counters` table, and
+`GET /shouts` and `GET /fire` say which it is.
+
+**Discord pings.** With the optional `DISCORD_WEBHOOK_URL` secret set (a Discord webhook URL; anything
+else is ignored), every guest shout that's stored is also posted to that channel: nick, text and the
+shout's id, with Discord Markdown escaped so text shows exactly as typed and can't make a masked link,
+and mentions off. Never the IP or anything else about who said it. The ping goes out after the answer
+(`waitUntil`), so a slow or failing webhook never touches the shout, and at most 30 go out per 10
+minutes (the same as the guest limit), so a flood can't get the webhook rate-limited. Host shouts,
+refused shouts and honeypot hits don't ping.
+
 **CORS.** Only `https://morganvanv.com`, `https://www.morganvanv.com`, `http://localhost:4200` and
-`http://localhost:4000` get CORS headers (methods `GET, POST, DELETE`; headers `Content-Type,
+`http://localhost:4000` get CORS headers (methods `GET, POST, PUT, DELETE`; headers `Content-Type,
 Authorization`). Any other origin gets none, so browsers block it. (CORS isn't access control: `curl`
 works from anywhere, which is why the limits above live on the server.)
 
@@ -97,7 +116,8 @@ works from anywhere, which is why the limits above live on the server.)
 - **The odometer stores one number.** No IPs, no ids, no "unique visitor" tracking: a visit is whatever
   the site says it is.
 - **Shouts store only what you typed:** nick, text, time, and whether it was Morgan. They're deleted
-  after 7 days by a daily alarm (and only the newest 500 are kept). There's no archive or backup.
+  after 30 days by a daily alarm, except the newest 20, which stay until newer ones push them out (and
+  only the newest 500 are kept at all). A shout also goes to Morgan's Discord if he's set up the ping. There's no archive or backup.
 - **IP addresses are never stored.** For rate limits, the visit throttle and "here", the IP (an IPv6
   /64) is hashed with SHA-256 and a random salt that exists only in memory, and only the hash is kept, in
   memory: an hour at most for shouts, 30 minutes for visits, a minute for "here".
@@ -162,20 +182,23 @@ and stays green.
    ```bash
    openssl rand -hex 32
    ```
-6. **Add three GitHub secrets** to `morgan-vanv/morganvanv.com-backend`, in an environment so only `main`
+6. **Add the GitHub secrets** to `morgan-vanv/morganvanv.com-backend`, in an environment so only `main`
    can use them: **Settings → Environments → New environment** named `production`; under **Deployment
    branches and tags** pick *Selected branches and tags* and add `main`; then **Add environment secret**
    for each:
    - `CLOUDFLARE_API_TOKEN`: the token from step 3
    - `CLOUDFLARE_ACCOUNT_ID`: the ID from step 4
    - `CAMPFIRE_HOST_KEY`: the key from step 5 (optional; without it, host features stay off)
+   - `DISCORD_WEBHOOK_URL`: optional, a Discord webhook to ping on every guest shout. In Discord:
+     **Server Settings → Integrations → Webhooks → New Webhook**, pick the channel (the Ask Morgan one
+     works), **Copy Webhook URL**. Without it, no pings.
 
    (Repository secrets work too, but then a workflow on any branch could read them.)
 7. **Deploy.** **Actions → Campfire → Run workflow** on `main` (or merge anything under `campfire/`).
-   The first deploy creates the Worker and its Durable Object and uploads the host key as a Worker
-   secret.
+   The first deploy creates the Worker and its Durable Object and uploads the host key (and the
+   webhook, if set) as Worker secrets.
 8. **Check it**: open `https://campfire.<subdomain>.workers.dev/`. It should answer
-   `{"name":"campfire","version":"1.0.0",…}`. A brand-new workers.dev name can take a minute or two to
+   `{"name":"campfire","version":"1.1.0",…}`. A brand-new workers.dev name can take a minute or two to
    start resolving. Then `…/visit` should say `{"count":0}`.
 9. **Become the host on the site**: visit `https://morganvanv.com/social/#host=<your key>` once, in each
    browser you use. The key moves into that browser's localStorage and out of the address bar;
@@ -184,11 +207,12 @@ and stays green.
 To change the host key later, update the GitHub secret and re-run the workflow (or run
 `npx wrangler secret put CAMPFIRE_HOST_KEY` in `campfire/` after `npx wrangler login`).
 
-To turn host features off, **deleting the GitHub secret isn't enough**: the Worker keeps the last key it
-was given. Remove it from the Worker too, in `campfire/` after `npx wrangler login`:
+To turn host features (or the pings) off, **deleting the GitHub secret isn't enough**: the Worker keeps
+the last value it was given. Remove it from the Worker too, in `campfire/` after `npx wrangler login`:
 
 ```bash
 npx wrangler secret delete CAMPFIRE_HOST_KEY
+npx wrangler secret delete DISCORD_WEBHOOK_URL
 ```
 
 (or in the dashboard: Workers & Pages → campfire → Settings → Variables and Secrets).
@@ -219,7 +243,8 @@ the shout numbers):
 | A counted visit (`POST /visit`) | 1 | 1 | 1 | 1 |
 | A repeat visit within 30 min, or `GET /visit` | 1 | 1 | 0 | 1 |
 | One shoutbox poll (`GET /shouts`), every 20 s while `/social` is open and visible | 1 | 1 | 0 | ≤ 50 |
-| A shout | 1 (+1 preflight) | 1 | 2 (the row + `sqlite_sequence`, from `AUTOINCREMENT`); 3 once 500 are kept | 3; 4 once 500 are kept |
+| A shout | 1 (+1 preflight) | 1 | 2 (the row + `sqlite_sequence`, from `AUTOINCREMENT`); 3 once 500 are kept | 3; 4 once 500 are kept (+1 the first time after the object wakes, to read whether the fire is open) |
+| Banking or opening the fire (`PUT /fire`) | 1 (+1 preflight) | 1 | 1 | 0 |
 | A honeypot hit | 1 (+1 preflight) | 1 | 0 | 1 |
 | The daily sweep | 0 | 1 (+1 row written for `setAlarm`) | the expired rows | ≤ 500 |
 

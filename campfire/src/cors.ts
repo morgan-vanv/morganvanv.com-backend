@@ -22,7 +22,7 @@ export function preflightHeaders(origin: string | null): Record<string, string> 
   if (!allow) return { Vary: 'Origin' };
   return {
     'Access-Control-Allow-Origin': allow,
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     // Browsers cap this (Chrome at 2 h), but every preflight saved is a request off the daily quota.
     'Access-Control-Max-Age': '86400',

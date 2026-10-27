@@ -1,13 +1,15 @@
 import { DurableObject } from 'cloudflare:workers';
-import { MAX_HERE, MAX_ROWS, SHOUT_PAGE } from './config';
+import { KEEP_NEWEST, MAX_HERE, MAX_ROWS, PING_LIMIT, PING_WINDOW_MS, SHOUT_PAGE } from './config';
 import { Cooldown, GlobalLimiter, Presence, RateLimiter, hashSubject, type RateDecision } from './limits';
-import { expiryCutoff, iso, nextSweep } from './time';
+import { burning, expiryCutoff, iso, nextSweep } from './time';
 import type { CleanShout } from './validate';
 
 export interface Env {
   CAMPFIRE: DurableObjectNamespace<Campfire>;
   /** Morgan's host key. Unset means host features are off. */
   CAMPFIRE_HOST_KEY?: string;
+  /** A Discord webhook to ping on every guest shout. Unset means no pings. */
+  DISCORD_WEBHOOK_URL?: string;
 }
 
 /** A shout as the API returns it. */
@@ -22,9 +24,18 @@ export interface Shout {
 export interface ShoutLog {
   readonly shouts: Shout[];
   readonly here: number;
+  /** False while the host has banked the fire: guests can read but not shout. */
+  readonly open: boolean;
 }
 
-export type AddResult = { readonly ok: true; readonly shout: Shout } | { readonly ok: false; readonly retryAfterMs: number };
+/**
+ * A stored shout (and whether it may ping Discord: guests only, within the ping limit), or why not:
+ * said too much lately, or the fire is banked.
+ */
+export type AddResult =
+  | { readonly ok: true; readonly shout: Shout; readonly ping: boolean }
+  | { readonly ok: false; readonly retryAfterMs: number }
+  | { readonly ok: false; readonly closed: true };
 
 type ShoutRow = { id: number; nick: string; text: string; at: number; host: number };
 
@@ -40,7 +51,8 @@ const toShout = (row: ShoutRow): Shout => ({ id: row.id, nick: row.nick, text: r
 const KEEP_WARM_MS = 30_000;
 
 /**
- * The campfire: one SQLite-backed Durable Object holding the visit count and the last week of shouts.
+ * The campfire: one SQLite-backed Durable Object holding the visit count and the shouts still burning (a month's, and
+ * always the newest 20).
  * Presence and rate limits live only in memory (see limits.ts); nothing that identifies a visitor is
  * ever written to storage.
  */
@@ -52,6 +64,10 @@ export class Campfire extends DurableObject<Env> {
   private readonly everyone = new GlobalLimiter();
   /** Counted visits per (hashed) IP. */
   private readonly visits = new Cooldown();
+  /** Discord pings, so a flood can't get the webhook rate-limited. */
+  private readonly pings = new GlobalLimiter(PING_LIMIT, PING_WINDOW_MS);
+  /** Whether the fire is open, read from storage once and then kept here (this is the only writer). */
+  private openCache: boolean | null = null;
   /** Who's polling the shoutbox, by hashed IP. */
   private readonly presence = new Presence();
   /** Salts the IP hashes; made up fresh each time the object wakes, never stored. */
@@ -112,12 +128,9 @@ export class Campfire extends DurableObject<Env> {
       this.presence.see(await this.hash(ip), now);
       this.keepWarm();
     }
-    const rows = this.run<ShoutRow>(
-      'SELECT id, nick, text, at, host FROM shouts WHERE at >= ? ORDER BY id DESC LIMIT ?',
-      expiryCutoff(now),
-      SHOUT_PAGE,
-    );
-    return { shouts: rows.reverse().map(toShout), here: Math.min(this.presence.count(now), MAX_HERE) };
+    // Newest first by id (an index range that stops after a page), then drop what's burned down.
+    const rows = burning(this.run<ShoutRow>('SELECT id, nick, text, at, host FROM shouts ORDER BY id DESC LIMIT ?', SHOUT_PAGE), now);
+    return { shouts: rows.reverse().map(toShout), here: Math.min(this.presence.count(now), MAX_HERE), open: this.isOpen() };
   }
 
   /**
@@ -129,6 +142,7 @@ export class Campfire extends DurableObject<Env> {
     const now = Date.now();
     const key = !shout.host && ip ? await this.hash(ip) : null;
     if (!shout.host) {
+      if (!this.isOpen()) return { ok: false, closed: true };
       const decision = firstRefusal(key ? this.limiter.check(key, now) : { ok: true }, this.everyone.check(now));
       if (!decision.ok) return decision;
     }
@@ -141,12 +155,15 @@ export class Campfire extends DurableObject<Env> {
     )[0]!;
     // Keep the newest MAX_ROWS by id: an index range, so it reads only what it deletes (usually one row).
     this.run('DELETE FROM shouts WHERE id <= ?', row.id - MAX_ROWS);
+    let ping = false;
     if (!shout.host) {
       if (key) this.limiter.record(key, now);
       this.everyone.record(now);
+      ping = this.pings.check(now).ok;
+      if (ping) this.pings.record(now);
       this.keepWarm();
     }
-    return { ok: true, shout: toShout(row) };
+    return { ok: true, shout: toShout(row), ping };
   }
 
   /** What the next shout's id will probably be (for the honeypot's convincing fake). */
@@ -161,10 +178,31 @@ export class Campfire extends DurableObject<Env> {
     return cursor.rowsWritten > 0;
   }
 
-  /** The daily sweep: the fire burns down. The one query that reads the whole (capped) table. */
+  /** Whether guests may shout. Open unless the host has banked the fire. */
+  isOpen(): boolean {
+    this.openCache ??= this.run<{ value: number }>(`SELECT value FROM counters WHERE name = 'banked'`).length === 0;
+    return this.openCache;
+  }
+
+  /** The host opens or banks the fire. Banking deletes nothing; it only stops guests shouting. */
+  setOpen(open: boolean): boolean {
+    if (open) this.run(`DELETE FROM counters WHERE name = 'banked'`);
+    else this.run(`INSERT INTO counters (name, value) VALUES ('banked', 1) ON CONFLICT (name) DO NOTHING`);
+    this.openCache = open;
+    return open;
+  }
+
+  /**
+   * The daily sweep: the fire burns down. Shouts past the TTL go, except the newest KEEP_NEWEST, which
+   * stay however old. The one query that reads the whole (capped) table.
+   */
   override async alarm(): Promise<void> {
     const now = Date.now();
-    const cursor = this.sql.exec('DELETE FROM shouts WHERE at < ?', expiryCutoff(now));
+    const cursor = this.sql.exec(
+      'DELETE FROM shouts WHERE at < ? AND id < (SELECT MIN(id) FROM (SELECT id FROM shouts ORDER BY id DESC LIMIT ?))',
+      expiryCutoff(now),
+      KEEP_NEWEST,
+    );
     this.tally(cursor);
     if (cursor.rowsWritten) console.log(`sweep: ${cursor.rowsWritten} expired shout(s) removed`);
     await this.ctx.storage.setAlarm(nextSweep(now));
@@ -201,8 +239,9 @@ export class Campfire extends DurableObject<Env> {
       this.presence.prune(now);
       this.limiter.prune(now);
       this.everyone.prune(now);
+      this.pings.prune(now);
       this.visits.prune(now);
-      if (this.presence.size || this.limiter.size || this.everyone.size || this.visits.size) this.keepWarm();
+      if (this.presence.size || this.limiter.size || this.everyone.size || this.pings.size || this.visits.size) this.keepWarm();
     }, KEEP_WARM_MS);
   }
 }

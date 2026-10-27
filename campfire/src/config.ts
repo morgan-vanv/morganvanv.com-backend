@@ -2,7 +2,7 @@
 
 export const NAME = 'campfire';
 /** Kept in step with package.json (a test checks). */
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 export const SOURCE_URL = 'https://github.com/morgan-vanv/morganvanv.com-backend/tree/main/campfire';
 
 /** The one Durable Object instance everything lives in. */
@@ -32,8 +32,10 @@ export const MINUTE = 60 * SECOND;
 export const HOUR = 60 * MINUTE;
 export const DAY = 24 * HOUR;
 
-/** The fire burns down: shouts older than this are gone. */
-export const SHOUT_TTL_MS = 7 * DAY;
+/** The fire burns down: shouts older than this are gone, unless they're among the newest KEEP_NEWEST. */
+export const SHOUT_TTL_MS = 30 * DAY;
+/** The newest shouts never burn down, however old, so a quiet month doesn't leave the log empty. */
+export const KEEP_NEWEST = 20;
 /** How many shouts GET /shouts returns at most. */
 export const SHOUT_PAGE = 50;
 /** How often the alarm sweeps expired shouts. */
@@ -57,6 +59,12 @@ export const VISIT_COOLDOWN_MS = 30 * MINUTE;
 
 /** Keep only the newest MAX_ROWS shouts (50 are ever shown), so no query can grow with the table. */
 export const MAX_ROWS = 500;
+
+/** Discord pings (one per guest shout, when a webhook is set): at most this many per window, so a flood can't get the webhook rate-limited. */
+export const PING_LIMIT = 30;
+export const PING_WINDOW_MS = 10 * MINUTE;
+/** Where a ping's title links to. */
+export const SHOUTBOX_URL = 'https://morganvanv.com/social/';
 
 /** Caps on the in-memory maps, so a flood can't grow them without bound. */
 export const MAX_TRACKED = 10_000;
