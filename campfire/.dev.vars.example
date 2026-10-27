@@ -1,0 +1,2 @@
+# Copy to .dev.vars for `npm run dev`. Any string works locally.
+CAMPFIRE_HOST_KEY=local-host-key
