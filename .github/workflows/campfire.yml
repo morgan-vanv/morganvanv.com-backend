@@ -1,4 +1,4 @@
-# The campfire (campfire/): test on every PR that touches it; deploy to Cloudflare from main.
+# The campfire (campfire/): test on every PR into main; deploy to Cloudflare from main when campfire/ changes.
 #
 # Actions are pinned to full commit SHAs (the deploy step receives a Cloudflare token);
 # Dependabot (.github/dependabot.yml) proposes updates weekly.
@@ -15,11 +15,10 @@ on:
     paths:
       - 'campfire/**'
       - '.github/workflows/campfire.yml'
+  # Every PR, not only ones that touch campfire/: "Campfire tests" is a required check, and a required
+  # check that never reports would block the PR. Deploys still only follow campfire changes (push, above).
   pull_request:
     branches: [main]
-    paths:
-      - 'campfire/**'
-      - '.github/workflows/campfire.yml'
   workflow_dispatch:
 
 permissions:
@@ -36,7 +35,7 @@ defaults:
 
 jobs:
   test:
-    name: Test
+    name: Campfire tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

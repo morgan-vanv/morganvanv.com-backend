@@ -140,7 +140,7 @@ so you can pretend to be several visitors. On Cloudflare that header is always s
 
 ## Setting it up (Morgan's checklist)
 
-The deploy workflow (`.github/workflows/campfire.yml`) tests every PR that touches `campfire/`, and on
+The deploy workflow (`.github/workflows/campfire.yml`) tests every PR into `main` (its "Campfire tests" job is a required check), and on
 `main` it deploys, but only once the secrets below exist; until then it skips the deploy with a notice
 and stays green.
 
