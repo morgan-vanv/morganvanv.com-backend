@@ -1,5 +1,8 @@
 # The campfire (campfire/): test on every PR that touches it; deploy to Cloudflare from main.
 #
+# Actions are pinned to full commit SHAs (the deploy step receives an account-wide Cloudflare token);
+# Dependabot (.github/dependabot.yml) proposes updates weekly.
+#
 # Deploying needs two repository secrets, CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (see
 # campfire/README.md, "Setting it up"). Until both exist the deploy is skipped with a notice, so the
 # workflow stays green. CAMPFIRE_HOST_KEY is optional: when set it becomes the Worker's secret of the same
@@ -36,8 +39,10 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: campfire/.nvmrc
           cache: npm
@@ -65,9 +70,12 @@ jobs:
           echo "### Campfire not deployed" >> "$GITHUB_STEP_SUMMARY"
           echo "$msg" >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.HAS_CLOUDFLARE == 'true'
-      - uses: actions/setup-node@v7
+        with:
+          # This job holds the Cloudflare token; don't leave a GitHub token in .git beside it.
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: env.HAS_CLOUDFLARE == 'true'
         with:
           node-version-file: campfire/.nvmrc
@@ -79,7 +87,7 @@ jobs:
       - name: Deploy to Cloudflare
         id: deploy
         if: env.HAS_CLOUDFLARE == 'true'
-        uses: cloudflare/wrangler-action@v4
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

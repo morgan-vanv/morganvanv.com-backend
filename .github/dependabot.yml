@@ -1,0 +1,21 @@
+# Weekly, grouped update PRs: the workflow's pinned actions and the campfire's npm packages.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /campfire
+    schedule:
+      interval: weekly
+    groups:
+      # Wrangler and the Vitest plugin pin the same Miniflare, so they move together.
+      cloudflare:
+        patterns: ['wrangler', '@cloudflare/*']
+      dev-tools:
+        patterns: ['*']
