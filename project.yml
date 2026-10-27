@@ -1,13 +1,27 @@
 packages:
   - name: ask
-    environment:
-      # DO will inject this from your deployment command
-      DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL}" 
     functions:
       - name: submit
-        runtime: "nodejs:default"
+        runtime: "nodejs:24" # pinned: built-in fetch, no dependencies
         web: true # This makes it publicly accessible via HTTP
+        environment:
+          # DO will inject these from your deployment command (.env)
+          DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL}"
+          # "Publish as PR" links (README). Leave either empty and the embed shows the file to add by hand.
+          PUBLISH_URL: "${PUBLISH_URL}"
+          PUBLISH_SECRET: "${PUBLISH_SECRET}"
         # A submission is one quick webhook call: keep a stuck or abused run short and small.
         limits:
           timeout: 5000 # ms
+          memory: 128 # MB
+      - name: publish
+        runtime: "nodejs:24" # pinned: built-in fetch and AbortController, no dependencies
+        web: true # The links in Discord point here
+        environment:
+          # Only this function holds the GitHub token; submit never needs it.
+          PUBLISH_SECRET: "${PUBLISH_SECRET}"
+          GITHUB_TOKEN: "${GITHUB_TOKEN}"
+          GITHUB_REPO: "${GITHUB_REPO}" # empty means morgan-vanv/morganvanv.com
+        limits:
+          timeout: 30000 # ms: GitHub calls time out at 8 s each and 25 s in all, before this does
           memory: 128 # MB

@@ -5,6 +5,8 @@
 // this function only knew `question`, so a submission without a known kind still works and gets
 // the old generic title.
 
+const { PUBLISHABLE_KINDS, makeItem, publishLink, usableSecret, filePath, fileContent } = require('./publish-link');
+
 const MAX_QUESTION_LENGTH = 1500;
 
 const KINDS = {
@@ -24,86 +26,145 @@ function problem(args) {
   return null;
 }
 
-// The site's own limits (SUBTITLE_MAX_LENGTH, CREDIT_MAX_LENGTH, MAX_NAME); longer means it didn't come from the form.
-const MAX_SUBTITLE = 60;
-const MAX_CREDIT = 24;
-const MAX_STAR_NAME = 24;
-
-/** One line of visitor text: no invisible or control characters, whitespace collapsed (as the site's oneLine). */
-function oneLine(value) {
-  if (typeof value !== 'string') return '';
-  return value.replace(/[\p{Cf}]/gu, '').replace(/\s+/g, ' ').replace(/\p{Cc}/gu, '').trim();
-}
-
-/** A single-quoted TypeScript string literal (as the site's tsString). */
-function tsString(text) {
-  return `'${text.replace(/\\/g, '\\\\').replace(/'/g, '\\\'')}'`;
-}
-
-/** A credit: null for anonymous, undefined when it's not something the form could have sent. */
-function creditOf(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value !== 'string') return undefined;
-  const credit = oneLine(value);
-  if (credit.length > MAX_CREDIT) return undefined;
-  return credit || null;
+/**
+ * Where "Publish as PR" links point and what signs them, or null when publishing isn't set up
+ * (then the embed shows the file to add by hand instead). Both come from the environment (README).
+ */
+function publishConfig(env) {
+  const url = typeof env.PUBLISH_URL === 'string' ? env.PUBLISH_URL.trim() : '';
+  const secret = usableSecret(env.PUBLISH_SECRET);
+  return /^https:\/\/[^\s"'<>()]+$/.test(url) && secret ? { url, secret } : null;
 }
 
 /**
- * The exact entry Morgan pastes into the site's source to approve a suggestion, or null.
- *
- * Built here from the structured fields, never taken from the visitor's text: whatever is pasted
- * goes into a file that ships to the live site (subtitles.const.ts is code), so a visitor who skips
- * the form must not be able to choose it. Anything that doesn't fit the form's limits gets no entry.
+ * True when the message shown in Discord says what the structured fields say, built the way the
+ * site's form builds it (contact-submission.ts, sky-naming.ts). The link publishes the fields, so
+ * someone who skips the form must not get a link for text that differs from the message above it.
  */
-function approveEntry(args, now) {
-  const added = now.toISOString().slice(0, 7);
-  const credit = creditOf(args.credit);
-  if (credit === undefined) return null;
+function matchesMessage(args) {
+  if (typeof args.question !== 'string') return false;
+  const message = args.question.trim();
+  const lines = message.split('\n');
+  // Older versions of the site add an "approve:" line; current ones (site #109) don't.
+  const rest = lines.slice(3).every(line => line.startsWith('approve: '));
+  const credit = args.credit === null || args.credit === undefined ? 'anonymous' : args.credit;
 
+  if (args.kind === 'question') {
+    return typeof args.text === 'string' && message === `${KINDS.question.title}\n${args.text}`.trim();
+  }
   if (args.kind === 'subtitle') {
-    const text = oneLine(args.subtitle);
-    if (!text || text.length > MAX_SUBTITLE) return null;
-    return `{ text: ${tsString(text)}, by: ${credit === null ? 'null' : tsString(credit)}, added: '${added}' },`;
+    return typeof args.subtitle === 'string' && rest
+      && lines[0] === KINDS.subtitle.title
+      && lines[1] === `"${args.subtitle}"`
+      && lines[2] === `credit: ${credit}`;
   }
-
   if (args.kind === 'star') {
-    const name = oneLine(args.name);
-    const star = args.star;
-    if (!name || name.length > MAX_STAR_NAME || !star || typeof star !== 'object') return null;
-    const { ra, dec } = star;
-    const okRa = typeof ra === 'number' && Number.isFinite(ra) && ra >= 0 && ra < 360;
-    const okDec = typeof dec === 'number' && Number.isFinite(dec) && dec >= -90 && dec <= 90;
-    if (!okRa || !okDec) return null;
-    return `[${[ra, dec, name, credit, added].map(value => JSON.stringify(value)).join(', ')}]`;
+    const star = args.star && typeof args.star === 'object' ? args.star : {};
+    if (typeof args.name !== 'string' || typeof star.mag !== 'number' || !Number.isFinite(star.mag)) return false;
+    const where = star.near ? `unnamed star near ${star.near}` : 'unnamed star';
+    return rest
+      && lines[0] === KINDS.star.title
+      && lines[1] === `${JSON.stringify(args.name)} for the ${where} (magnitude ${star.mag.toFixed(1)})`
+      && lines[2] === `named by: ${credit}`;
   }
-
-  return null;
+  return false;
 }
 
-/** The Discord webhook payload for a valid submission. */
-function discordPayload(args, now = new Date()) {
+/** Discord Markdown escaped, so text shows exactly as typed outside a code block. */
+function discordEscape(text) {
+  return text.replace(/[\\`*_~|<>#\-[\]()]/g, '\\$&');
+}
+
+/** What the link would publish, exactly: in a code block, or escaped when a backtick could break one. */
+function publishPreview(item) {
+  const { fields } = item;
+  let text;
+  if (item.kind === 'question') text = fields.text;
+  else if (item.kind === 'subtitle') text = `text: ${JSON.stringify(fields.text)}\nby: ${JSON.stringify(fields.by)}`;
+  else {
+    text = `name: ${JSON.stringify(fields.name)}\nby: ${JSON.stringify(fields.by)}\nra: ${fields.ra}, dec: ${fields.dec}`;
+    if (fields.near) text += `\nnear: ${JSON.stringify(fields.near)}`;
+  }
+  return text.includes('`') ? discordEscape(text) : '```\n' + text + '\n```';
+}
+
+const MAX_FIELD = 1024;
+
+const NOTHING = {
+  mismatch: 'Nothing to publish: the message above doesn\'t match the fields that would be published.',
+  comment: 'Nothing to publish: the question contains `<!--`. Write the file by hand if you want it.',
+  invalid: 'Nothing to publish: this doesn\'t fit the form\'s limits.',
+};
+const LINK_TOO_LONG = 'No publish link: too long to fit in one. Create the file above by hand.';
+const HAND_FIELD = 'To add by hand, create this file';
+
+/**
+ * The file publishing would commit, to create by hand: its path, then its exact contents (in a code
+ * block, or escaped when a backtick could break one). Says so when it won't fit in a field.
+ */
+function handFileField(item) {
+  const path = `\`${filePath(item)}\``;
+  const content = fileContent(item);
+  const shown = content.includes('`')
+    ? discordEscape(content)
+    : '```' + (item.kind === 'question' ? 'md' : 'json') + '\n' + content + '```';
+  const value = `${path}\n${shown}`;
+  if (value.length <= MAX_FIELD) return { name: HAND_FIELD, value };
+  return {
+    name: HAND_FIELD,
+    value: `${path}\nToo long to show here (${content.length} characters). Write it by hand from the message above, `
+      + 'in the format in the site\'s content/README.md.',
+  };
+}
+
+/**
+ * The fields for a question, subtitle or star name (never the anonymous dropbox):
+ *   publishing on:  "Will publish" (the exact text) and "Publish" (the link); if no link fits, the file to
+ *                   create by hand and why there's no link;
+ *   publishing off: the file to create by hand, exactly as publishing would write it;
+ *   either way, one field saying why when there's nothing to publish (the message doesn't match its
+ *   fields, a question with `<!--`, or fields outside the form's limits).
+ */
+function entryFields(args, now, publish, randomHex) {
+  if (!PUBLISHABLE_KINDS.includes(args.kind)) return [];
+  const why = reason => [{ name: publish ? 'Publish' : HAND_FIELD, value: NOTHING[reason] }];
+  if (!matchesMessage(args)) return why('mismatch');
+  if (args.kind === 'question' && typeof args.text === 'string' && args.text.includes('<!--')) return why('comment');
+  const item = makeItem(args, now, randomHex);
+  if (!item) return why('invalid');
+  if (!publish) return [handFileField(item)];
+
+  const url = publishLink(item, publish.url, publish.secret);
+  const preview = publishPreview(item);
+  if (url && preview.length <= MAX_FIELD) {
+    return [{ name: 'Will publish', value: preview }, { name: 'Publish', value: `[Publish as PR](${url})` }];
+  }
+  return [handFileField(item), { name: 'Publish', value: LINK_TOO_LONG }];
+}
+
+/**
+ * The Discord webhook payload for a valid submission. A question, subtitle or star name also gets a
+ * "Publish as PR" link (with `publish`, see publishConfig) or the file to create by hand.
+ */
+function discordPayload(args, now = new Date(), publish = null, randomHex = undefined) {
   const kind = Object.prototype.hasOwnProperty.call(KINDS, args.kind) ? KINDS[args.kind] : null;
-  // The site ends a suggestion with its own "approve:" line; drop any (it's rebuilt below), so
-  // nothing a visitor typed can pose as the line to paste.
+  // Older versions of the site end a suggestion with an "approve:" line for a format the site no longer
+  // reads; drop any, so nothing a visitor typed can pose as something to paste.
   const lines = args.question.trim().split('\n').filter(line => !line.trimStart().startsWith('approve:'));
 
   // The title already says what it is, so drop the matching label line.
   if (kind && lines[0]?.trim() === kind.title) lines.shift();
 
-  const fields = [];
-  const entry = approveEntry(args, now);
-  if (entry) {
-    // A backtick in a visitor's text could close the code block early, so such entries go in as plain text.
-    const value = entry.includes('`') ? entry : '```\n' + entry + '\n```';
-    fields.push({ name: 'To approve, paste this', value: value.slice(0, 1024) });
-  }
+  const fields = entryFields(args, now, publish, randomHex);
 
   const { title, color } = kind ?? LEGACY;
-  const embed = { title, description: lines.join('\n').trim() || '(empty)', color, timestamp: now.toISOString() };
+  // Square brackets escaped, so a visitor can't write a masked link ([Publish as PR](https://…)) that
+  // passes for the real one in the fields below. The text reads the same.
+  const description = lines.join('\n').trim().replace(/[[\]]/g, '\\$&') || '(empty)';
+  const embed = { title, description, color, timestamp: now.toISOString() };
   if (fields.length) embed.fields = fields;
   // Visitors' text never pings anyone, whatever it says.
   return { embeds: [embed], allowed_mentions: { parse: [] } };
 }
 
-module.exports = { problem, discordPayload, approveEntry, MAX_QUESTION_LENGTH };
+module.exports = { problem, discordPayload, publishConfig, matchesMessage, discordEscape, MAX_QUESTION_LENGTH };
