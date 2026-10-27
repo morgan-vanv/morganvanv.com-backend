@@ -57,3 +57,7 @@ test('an approve entry with a backtick is not put in a code block it could break
   const { embeds: [embed] } = discordPayload({ kind: 'star', question }, now);
   assert.equal(embed.fields[0].value, '[281.193, 37.605, "G```x", null, "2026-10"]');
 });
+
+test('nobody gets pinged by a visitor\'s text', () => {
+  assert.deepEqual(discordPayload({ question: '@everyone hi' }, now).allowed_mentions, { parse: [] });
+});

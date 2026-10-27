@@ -46,7 +46,8 @@ function discordPayload(args, now = new Date()) {
   const { title, color } = kind ?? LEGACY;
   const embed = { title, description: lines.join('\n').trim() || '(empty)', color, timestamp: now.toISOString() };
   if (fields.length) embed.fields = fields;
-  return { embeds: [embed] };
+  // Visitors' text never pings anyone, whatever it says.
+  return { embeds: [embed], allowed_mentions: { parse: [] } };
 }
 
 module.exports = { problem, discordPayload, MAX_QUESTION_LENGTH };
