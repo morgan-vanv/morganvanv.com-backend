@@ -7,7 +7,7 @@ packages:
         environment:
           # DO will inject these from your deployment command (.env)
           DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL}"
-          # "Publish as PR" links (README). Leave either empty and submissions work exactly as before.
+          # "Publish as PR" links (README). Leave either empty and the embed shows the file to add by hand.
           PUBLISH_URL: "${PUBLISH_URL}"
           PUBLISH_SECRET: "${PUBLISH_SECRET}"
         # A submission is one quick webhook call: keep a stuck or abused run short and small.
