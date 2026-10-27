@@ -32,5 +32,6 @@ jobs:
           # The functions' runtime on DigitalOcean (nodejs:24 in project.yml once #4 lands).
           node-version: 24
           package-manager-cache: false
-      # The tests need no npm packages; Node's own test runner finds test/*.test.js.
-      - run: node --test
+      # The tests need no npm packages. Only test/: a bare `node --test` would also pick up the campfire's
+      # Vitest files under campfire/ (Node 24 runs .ts), which need the Workers runtime.
+      - run: node --test 'test/**/*.test.js'
