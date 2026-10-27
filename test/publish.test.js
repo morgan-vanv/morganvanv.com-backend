@@ -379,6 +379,8 @@ test('error pages: bad links, publishing off, methods', async () => {
   const noToken = await handle(linkArgs(subtitle, 'POST'), { ...deps, env: { PUBLISH_SECRET: SECRET, GITHUB_TOKEN: '${GITHUB_TOKEN}' } });
   assert.equal(noToken.statusCode, 503);
   assert.match(noToken.body, /GITHUB_TOKEN isn&#39;t set/);
+  const tokenOff = await handle(linkArgs(subtitle, 'POST'), { ...deps, env: { PUBLISH_SECRET: SECRET, GITHUB_TOKEN: 'off' } });
+  assert.match(tokenOff.body, /GITHUB_TOKEN isn&#39;t set/);
   const badRepo = await handle(linkArgs(subtitle, 'POST'), { ...deps, env: { ...env, GITHUB_REPO: 'nope' } });
   assert.equal(badRepo.statusCode, 503);
   assert.equal(github.calls.length, 0);

@@ -161,6 +161,9 @@ test('publishing is on only with an https PUBLISH_URL and a long enough PUBLISH_
   assert.equal(publishConfig({ PUBLISH_URL: publish.url, PUBLISH_SECRET: 'short' }), null);
   assert.equal(publishConfig({ PUBLISH_URL: 'http://insecure.example', PUBLISH_SECRET: publish.secret }), null);
   assert.equal(publishConfig({ PUBLISH_URL: '${PUBLISH_URL}', PUBLISH_SECRET: '${PUBLISH_SECRET}' }), null);
+  // doctl refuses empty values, so .env switches it off with "off".
+  assert.equal(publishConfig({ PUBLISH_URL: 'off', PUBLISH_SECRET: publish.secret }), null);
+  assert.equal(publishConfig({ PUBLISH_URL: publish.url, PUBLISH_SECRET: 'off' }), null);
   assert.deepEqual(publishConfig({ PUBLISH_URL: ` ${publish.url} `, PUBLISH_SECRET: publish.secret }), publish);
 });
 
