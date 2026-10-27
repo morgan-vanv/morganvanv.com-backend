@@ -8,8 +8,18 @@ async function main(args) {
         };
     }
 
+    // Only the site's POST is a submission. Web actions also take GET query parameters, so without
+    // this a plain link or <img src="…?question=…"> on any page would post to Discord from its visitors.
+    if (args.__ow_method && args.__ow_method !== "post") {
+        return {
+            statusCode: 405,
+            headers: { 'Allow': 'POST, OPTIONS', 'Content-Type': 'application/json' },
+            body: { error: "Method not allowed." }
+        };
+    }
+
     // 2. Honeypot Spam Mitigation
-    if (args.username_honey && args.username_honey.trim() !== "") {
+    if (typeof args.username_honey === "string" && args.username_honey.trim() !== "") {
         return { 
             statusCode: 200, 
             headers: { 'Content-Type': 'application/json' },

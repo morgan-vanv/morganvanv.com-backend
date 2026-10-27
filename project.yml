@@ -7,3 +7,7 @@ packages:
       - name: submit
         runtime: "nodejs:default"
         web: true # This makes it publicly accessible via HTTP
+        # A submission is one quick webhook call: keep a stuck or abused run short and small.
+        limits:
+          timeout: 5000 # ms
+          memory: 128 # MB
