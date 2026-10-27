@@ -1,4 +1,5 @@
 const fetch = require('node-fetch');
+const { problem, discordPayload } = require('./embed');
 
 async function main(args) {
     // 1. CORS Preflight Handling for GitHub Pages
@@ -18,31 +19,24 @@ async function main(args) {
     }
 
     // 3. Input Validation
-    const userQuestion = args.question;
-    if (!userQuestion || userQuestion.trim() === "") {
+    const error = problem(args);
+    if (error) {
         return {
             statusCode: 400,
             headers: { 'Content-Type': 'application/json' },
-            body: { error: "Question field cannot be empty." }
+            body: { error }
         };
     }
 
-    // 4. Discord Payload Construction
-    const discordPayload = {
-        embeds: [{
-            title: "📬 New Anonymous Submission",
-            description: userQuestion.trim(),
-            color: 5814783,
-            timestamp: new Date().toISOString()
-        }]
-    };
+    // 4. Discord Payload Construction (a title and colour per kind; see embed.js)
+    const payload = discordPayload(args);
 
     // 5. Dispatch to Discord
     try {
         const response = await fetch(process.env.DISCORD_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(discordPayload)
+            body: JSON.stringify(payload)
         });
 
         if (!response.ok) {
