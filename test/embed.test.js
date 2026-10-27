@@ -51,3 +51,9 @@ test('empty and oversized submissions are refused', () => {
   assert.equal(problem({ question: 'x'.repeat(1501) }), 'Submission is too long.');
   assert.equal(problem({ question: 'fine' }), null);
 });
+
+test('an approve entry with a backtick is not put in a code block it could break out of', () => {
+  const question = '⭐ Star name suggestion\n"G```x" for the unnamed star near Vega (magnitude 4.3)\napprove: [281.193, 37.605, "G```x", null, "2026-10"]';
+  const { embeds: [embed] } = discordPayload({ kind: 'star', question }, now);
+  assert.equal(embed.fields[0].value, '[281.193, 37.605, "G```x", null, "2026-10"]');
+});

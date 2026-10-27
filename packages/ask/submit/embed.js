@@ -37,7 +37,10 @@ function discordPayload(args, now = new Date()) {
   const approveAt = lines.findIndex(line => line.startsWith('approve: '));
   if (approveAt !== -1) {
     const [approve] = lines.splice(approveAt, 1);
-    fields.push({ name: 'To approve, paste this', value: '```\n' + approve.slice('approve: '.length) + '\n```' });
+    const entry = approve.slice('approve: '.length);
+    // A backtick in a visitor's text could close the code block early, so such entries go in as plain text.
+    const value = entry.includes('`') ? entry : '```\n' + entry + '\n```';
+    fields.push({ name: 'To approve, paste this', value: value.slice(0, 1024) });
   }
 
   const { title, color } = kind ?? LEGACY;
