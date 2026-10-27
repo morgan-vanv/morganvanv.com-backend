@@ -1,15 +1,29 @@
-const fetch = require('node-fetch');
+// The runtime is pinned to nodejs:24 in project.yml, so fetch is built in: no dependencies.
+const { problem, discordPayload, publishConfig } = require('./embed');
+const { methodOf } = require('./publish-link');
 
 async function main(args) {
     // 1. CORS Preflight Handling for GitHub Pages
-    if (args.__ow_method === "options") {
+    const method = methodOf(args);
+    if (method === "options") {
         return {
             statusCode: 204
         };
     }
 
+    // Only the site's POST is a submission. Web actions also take GET query parameters, so without
+    // this a plain link or <img src="…?question=…"> on any page would post to Discord from its visitors.
+    // A request whose method the platform didn't report is refused too.
+    if (method !== "post") {
+        return {
+            statusCode: 405,
+            headers: { 'Allow': 'POST, OPTIONS', 'Content-Type': 'application/json' },
+            body: { error: "Method not allowed." }
+        };
+    }
+
     // 2. Honeypot Spam Mitigation
-    if (args.username_honey && args.username_honey.trim() !== "") {
+    if (typeof args.username_honey === "string" && args.username_honey.trim() !== "") {
         return { 
             statusCode: 200, 
             headers: { 'Content-Type': 'application/json' },
@@ -18,31 +32,25 @@ async function main(args) {
     }
 
     // 3. Input Validation
-    const userQuestion = args.question;
-    if (!userQuestion || userQuestion.trim() === "") {
+    const error = problem(args);
+    if (error) {
         return {
             statusCode: 400,
             headers: { 'Content-Type': 'application/json' },
-            body: { error: "Question field cannot be empty." }
+            body: { error }
         };
     }
 
-    // 4. Discord Payload Construction
-    const discordPayload = {
-        embeds: [{
-            title: "📬 New Anonymous Submission",
-            description: userQuestion.trim(),
-            color: 5814783,
-            timestamp: new Date().toISOString()
-        }]
-    };
+    // 4. Discord Payload Construction (a title and colour per kind, and a "Publish as PR" link
+    //    when PUBLISH_URL and PUBLISH_SECRET are set; see embed.js)
+    const payload = discordPayload(args, new Date(), publishConfig(process.env));
 
     // 5. Dispatch to Discord
     try {
         const response = await fetch(process.env.DISCORD_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(discordPayload)
+            body: JSON.stringify(payload)
         });
 
         if (!response.ok) {
