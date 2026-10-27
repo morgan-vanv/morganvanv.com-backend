@@ -5,6 +5,8 @@
 // this function only knew `question`, so a submission without a known kind still works and gets
 // the old generic title.
 
+const { PUBLISHABLE_KINDS, cleanFields, makeItem, publishLink, usableSecret } = require('./publish-link');
+
 const MAX_QUESTION_LENGTH = 1500;
 
 const KINDS = {
@@ -24,29 +26,9 @@ function problem(args) {
   return null;
 }
 
-// The site's own limits (SUBTITLE_MAX_LENGTH, CREDIT_MAX_LENGTH, MAX_NAME); longer means it didn't come from the form.
-const MAX_SUBTITLE = 60;
-const MAX_CREDIT = 24;
-const MAX_STAR_NAME = 24;
-
-/** One line of visitor text: no invisible or control characters, whitespace collapsed (as the site's oneLine). */
-function oneLine(value) {
-  if (typeof value !== 'string') return '';
-  return value.replace(/[\p{Cf}]/gu, '').replace(/\s+/g, ' ').replace(/\p{Cc}/gu, '').trim();
-}
-
 /** A single-quoted TypeScript string literal (as the site's tsString). */
 function tsString(text) {
   return `'${text.replace(/\\/g, '\\\\').replace(/'/g, '\\\'')}'`;
-}
-
-/** A credit: null for anonymous, undefined when it's not something the form could have sent. */
-function creditOf(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value !== 'string') return undefined;
-  const credit = oneLine(value);
-  if (credit.length > MAX_CREDIT) return undefined;
-  return credit || null;
 }
 
 /**
@@ -58,31 +40,43 @@ function creditOf(value) {
  */
 function approveEntry(args, now) {
   const added = now.toISOString().slice(0, 7);
-  const credit = creditOf(args.credit);
-  if (credit === undefined) return null;
+  const fields = args.kind === 'subtitle' || args.kind === 'star' ? cleanFields(args.kind, args) : null;
+  if (!fields) return null;
 
   if (args.kind === 'subtitle') {
-    const text = oneLine(args.subtitle);
-    if (!text || text.length > MAX_SUBTITLE) return null;
-    return `{ text: ${tsString(text)}, by: ${credit === null ? 'null' : tsString(credit)}, added: '${added}' },`;
+    return `{ text: ${tsString(fields.text)}, by: ${fields.by === null ? 'null' : tsString(fields.by)}, added: '${added}' },`;
   }
-
-  if (args.kind === 'star') {
-    const name = oneLine(args.name);
-    const star = args.star;
-    if (!name || name.length > MAX_STAR_NAME || !star || typeof star !== 'object') return null;
-    const { ra, dec } = star;
-    const okRa = typeof ra === 'number' && Number.isFinite(ra) && ra >= 0 && ra < 360;
-    const okDec = typeof dec === 'number' && Number.isFinite(dec) && dec >= -90 && dec <= 90;
-    if (!okRa || !okDec) return null;
-    return `[${[ra, dec, name, credit, added].map(value => JSON.stringify(value)).join(', ')}]`;
-  }
-
-  return null;
+  return `[${[fields.ra, fields.dec, fields.name, fields.by, added].map(value => JSON.stringify(value)).join(', ')}]`;
 }
 
-/** The Discord webhook payload for a valid submission. */
-function discordPayload(args, now = new Date()) {
+/**
+ * Where "Publish as PR" links point and what signs them, or null when publishing isn't set up
+ * (then every embed is exactly as before). Both come from the environment (README).
+ */
+function publishConfig(env) {
+  const url = typeof env.PUBLISH_URL === 'string' ? env.PUBLISH_URL.trim() : '';
+  const secret = usableSecret(env.PUBLISH_SECRET);
+  return /^https:\/\/[^\s"'<>()]+$/.test(url) && secret ? { url, secret } : null;
+}
+
+/**
+ * The "Publish" field for a question, subtitle or star name when publishing is set up, or null.
+ * The anonymous dropbox never gets one.
+ */
+function publishField(args, now, publish, randomHex) {
+  if (!publish || !PUBLISHABLE_KINDS.includes(args.kind)) return null;
+  const item = makeItem(args, now, randomHex);
+  if (!item) return { name: 'Publish', value: 'No publish link: this doesn\'t match what the form sends.' };
+  const url = publishLink(item, publish.url, publish.secret);
+  if (!url) return { name: 'Publish', value: 'No publish link: too long to fit in one. Add it to the site by hand.' };
+  return { name: 'Publish', value: `[Publish as PR](${url})` };
+}
+
+/**
+ * The Discord webhook payload for a valid submission. With `publish` (see publishConfig), a
+ * question, subtitle or star name gets a "Publish as PR" link in place of the entry to paste.
+ */
+function discordPayload(args, now = new Date(), publish = null, randomHex = undefined) {
   const kind = Object.prototype.hasOwnProperty.call(KINDS, args.kind) ? KINDS[args.kind] : null;
   // The site ends a suggestion with its own "approve:" line; drop any (it's rebuilt below), so
   // nothing a visitor typed can pose as the line to paste.
@@ -92,12 +86,15 @@ function discordPayload(args, now = new Date()) {
   if (kind && lines[0]?.trim() === kind.title) lines.shift();
 
   const fields = [];
+  const publishing = publishField(args, now, publish, randomHex);
   const entry = approveEntry(args, now);
-  if (entry) {
+  // The entry to paste is the fallback: it goes when there's a link to press instead.
+  if (entry && !(publishing && publishing.value.startsWith('[Publish as PR]'))) {
     // A backtick in a visitor's text could close the code block early, so such entries go in as plain text.
     const value = entry.includes('`') ? entry : '```\n' + entry + '\n```';
     fields.push({ name: 'To approve, paste this', value: value.slice(0, 1024) });
   }
+  if (publishing) fields.push(publishing);
 
   const { title, color } = kind ?? LEGACY;
   const embed = { title, description: lines.join('\n').trim() || '(empty)', color, timestamp: now.toISOString() };
@@ -106,4 +103,4 @@ function discordPayload(args, now = new Date()) {
   return { embeds: [embed], allowed_mentions: { parse: [] } };
 }
 
-module.exports = { problem, discordPayload, approveEntry, MAX_QUESTION_LENGTH };
+module.exports = { problem, discordPayload, approveEntry, publishConfig, MAX_QUESTION_LENGTH };

@@ -1,5 +1,5 @@
 const fetch = require('node-fetch');
-const { problem, discordPayload } = require('./embed');
+const { problem, discordPayload, publishConfig } = require('./embed');
 
 async function main(args) {
     // 1. CORS Preflight Handling for GitHub Pages
@@ -38,8 +38,9 @@ async function main(args) {
         };
     }
 
-    // 4. Discord Payload Construction (a title and colour per kind; see embed.js)
-    const payload = discordPayload(args);
+    // 4. Discord Payload Construction (a title and colour per kind, and a "Publish as PR" link
+    //    when PUBLISH_URL and PUBLISH_SECRET are set; see embed.js)
+    const payload = discordPayload(args, new Date(), publishConfig(process.env));
 
     // 5. Dispatch to Discord
     try {
