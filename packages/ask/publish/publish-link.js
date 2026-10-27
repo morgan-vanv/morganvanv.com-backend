@@ -1,4 +1,5 @@
-// A "Publish as PR" link: one visitor suggestion, signed so the stateless publish function can trust it.
+// A "Publish as PR" link: one visitor suggestion, signed so the stateless publish function can trust it,
+// and the file it becomes in the site's repo (content/, read by the site; see its content/README.md).
 //
 // ask/submit makes the links (into Morgan's private Discord) and ask/publish checks them. DigitalOcean
 // deploys each function folder on its own, so this file lives in both folders; a test fails if the
@@ -163,6 +164,37 @@ function makeItem(args, now = new Date(), randomHex = () => crypto.randomBytes(4
   return isValidItem(item) ? item : null;
 }
 
+// The file an item becomes. ask/publish commits it; ask/submit shows it in Discord to add by hand
+// when publishing is off. The site reads these exact paths and shapes:
+//   content/subtitles/<id>.json  { "text", "by", "added": "YYYY-MM" }
+//   content/stars/<id>.json      { "ra", "dec", "name", "by", "added": "YYYY-MM", "near"? }
+//   content/mailbag/<id>.md      front matter (asked: YYYY-MM-DD), the question quoted, then Morgan's answer
+
+const DIRECTORIES = { subtitle: 'content/subtitles', star: 'content/stars', question: 'content/mailbag' };
+
+const ANSWER_MARKER = '<!-- Write your answer below this line, then merge. Leave it empty and the site\'s checks will fail. -->';
+
+function filePath(item) {
+  return `${DIRECTORIES[item.kind]}/${item.id}${item.kind === 'question' ? '.md' : '.json'}`;
+}
+
+/** The new file's text. */
+function fileContent(item) {
+  const { kind, fields, iat } = item;
+  const added = isoDay(iat).slice(0, 7);
+  if (kind === 'subtitle') {
+    return JSON.stringify({ text: fields.text, by: fields.by, added }, null, 2) + '\n';
+  }
+  if (kind === 'star') {
+    const star = { ra: fields.ra, dec: fields.dec, name: fields.name, by: fields.by, added };
+    if (fields.near) star.near = fields.near;
+    return JSON.stringify(star, null, 2) + '\n';
+  }
+  // Every line of the question is quoted, so nothing in it can end the front matter or pass for the marker.
+  const quoted = fields.text.split('\n').map(line => (line ? `> ${line}` : '>')).join('\n');
+  return `---\nasked: ${isoDay(iat)}\n---\n${quoted}\n\n${ANSWER_MARKER}\n`;
+}
+
 /** The submission-shaped args that `fields` came from, so they can be cleaned again and compared. */
 function argsOf(kind, fields) {
   if (kind === 'question') return { text: fields.text };
@@ -274,6 +306,9 @@ module.exports = {
   slugify,
   makeItem,
   isValidItem,
+  ANSWER_MARKER,
+  filePath,
+  fileContent,
   encodeItem,
   sign,
   usableSecret,

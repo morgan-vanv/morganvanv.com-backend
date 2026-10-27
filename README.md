@@ -24,9 +24,9 @@ Tests: `node --test` (no install needed; on Node 22+ don't pass `test/`, a direc
 
 1. A visitor sends a question, a greeting subtitle or a star name. `ask/submit` posts it to Discord as before.
    When publishing is set up, the embed also shows **Will publish** (exactly the text that would go in the file)
-   and a **Publish as PR** link, instead of "To approve, paste this". The anonymous dropbox never gets one, and
-   neither does a submission whose message doesn't match its fields the way the site's form builds them, or a
-   question containing `<!--`; the embed says why.
+   and a **Publish as PR** link; without it, the file to create by hand (see [Without publishing](#without-publishing)).
+   The anonymous dropbox never gets either, and neither does a submission whose message doesn't match its
+   fields the way the site's form builds them, or a question containing `<!--`; the embed says why.
 2. The link points to `ask/publish` and carries the item itself, signed with `PUBLISH_SECRET`
    (an HMAC, so nobody can make or change one). It's built from the form's structured fields, cleaned and held
    to the form's limits, never from the free-text message. Links last 30 days.
@@ -59,6 +59,17 @@ One file per entry, so pending PRs never conflict. `<id>` is `YYYY-MM-DD-<slug>-
 visitor's exact words); find the answer marker only at the start of a line (quoted lines start with `>`, so
 they can't fake it); and fail the checks when the answer under it is empty.
 
+### Without publishing
+
+With `PUBLISH_URL` empty (or before it's set up), a question, subtitle or star name gets a
+**To add by hand, create this file** field instead: the path (`content/subtitles/<id>.json`,
+`content/stars/<id>.json` or `content/mailbag/<id>.md`) and the file's exact contents, built by the same code
+publishing uses (`publish-link.js`). Create that file in the site repo to approve it; for a question, write
+your answer under the marker line first. The same field appears with publishing on when a link would be too
+long. If the file won't fit in a Discord field (1024 characters, after escaping), the field says so and gives
+the path. No file is shown when the message doesn't match its fields, for the dropbox, or for anything
+outside the form's limits.
+
 ### Setup
 
 1. **Create the GitHub token.** GitHub → Settings → Developer settings → Personal access tokens →
@@ -71,8 +82,8 @@ they can't fake it); and fail the checks when the answer under it is empty.
 2. **Make the signing secret:** `openssl rand -hex 32`.
 3. **Fill `.env`** (copy `.env.example`; keep every key, even empty ones): `PUBLISH_SECRET` and `GITHUB_TOKEN`
    from above, `GITHUB_REPO` empty (it means `morgan-vanv/morganvanv.com`), **`PUBLISH_URL` empty**.
-4. **Deploy:** `doctl serverless deploy . --env .env`. With `PUBLISH_URL` empty, Discord looks exactly as before,
-   so this is safe to do now.
+4. **Deploy:** `doctl serverless deploy . --env .env`. With `PUBLISH_URL` empty, Discord shows the file to
+   create by hand (above) and nothing can be published from a link, so this is safe to do now.
 5. **Note the publish URL:** `doctl serverless functions get ask/publish --url` (it's the `ask/submit` URL with
    `submit` swapped for `publish`). Keep it for step 6; don't put it in `.env` yet.
 6. **Once the site side is merged** (it reads `content/` and fails a mailbag PR with an empty answer): put the
@@ -85,7 +96,7 @@ they can't fake it); and fail the checks when the answer under it is empty.
 
 ### Turning it off
 
-- **No more links:** empty `PUBLISH_URL` in `.env` and redeploy. Embeds go back to "To approve, paste this".
+- **No more links:** empty `PUBLISH_URL` in `.env` and redeploy. Embeds go back to the file to create by hand.
 - **Kill the links already in Discord too:** also empty `GITHUB_TOKEN` (or revoke the token on GitHub). Making a
   new `PUBLISH_SECRET` instead invalidates every existing link but leaves publishing on for new ones.
 

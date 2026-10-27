@@ -1,22 +1,11 @@
-// What a published item becomes in the site's repo: one new file (so pending PRs never conflict),
-// on its own branch, with a PR that says how to merge or reject it.
-//
-// The site reads these exact paths and shapes:
-//   content/subtitles/<id>.json  { "text", "by", "added": "YYYY-MM" }
-//   content/stars/<id>.json      { "ra", "dec", "name", "by", "added": "YYYY-MM", "near"? }
-//   content/mailbag/<id>.md      front matter (asked: YYYY-MM-DD), the question quoted, then Morgan's answer
+// What a published item becomes in the site's repo: one new file (the path and contents are built in
+// publish-link.js, shared with ask/submit), on its own branch, with a PR that says how to merge or reject it.
 
-const DIRECTORIES = { subtitle: 'content/subtitles', star: 'content/stars', question: 'content/mailbag' };
-
-const ANSWER_MARKER = '<!-- Write your answer below this line, then merge. Leave it empty and the site\'s checks will fail. -->';
+const { ANSWER_MARKER, filePath, fileContent } = require('./publish-link');
 
 // Visitor PRs say where they came from; no @-mentions, so nobody is pinged.
 const PR_FOOTER = '<sub>Opened by `ask/publish` (morganvanv.com-backend) from a signed link in Morgan\'s Discord.</sub>';
 
-
-function month(iat) {
-  return new Date(iat * 1000).toISOString().slice(0, 7);
-}
 
 function day(iat) {
   return new Date(iat * 1000).toISOString().slice(0, 10);
@@ -24,26 +13,6 @@ function day(iat) {
 
 function branchName(item) {
   return `visitor/${item.kind}/${item.id}`;
-}
-
-function filePath(item) {
-  return `${DIRECTORIES[item.kind]}/${item.id}${item.kind === 'question' ? '.md' : '.json'}`;
-}
-
-/** The new file's text. */
-function fileContent(item) {
-  const { kind, fields, iat } = item;
-  if (kind === 'subtitle') {
-    return JSON.stringify({ text: fields.text, by: fields.by, added: month(iat) }, null, 2) + '\n';
-  }
-  if (kind === 'star') {
-    const star = { ra: fields.ra, dec: fields.dec, name: fields.name, by: fields.by, added: month(iat) };
-    if (fields.near) star.near = fields.near;
-    return JSON.stringify(star, null, 2) + '\n';
-  }
-  // Every line of the question is quoted, so nothing in it can end the front matter or pass for the marker.
-  const quoted = fields.text.split('\n').map(line => (line ? `> ${line}` : '>')).join('\n');
-  return `---\nasked: ${day(iat)}\n---\n${quoted}\n\n${ANSWER_MARKER}\n`;
 }
 
 /**
