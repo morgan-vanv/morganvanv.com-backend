@@ -1,0 +1,107 @@
+# The campfire (campfire/): test on every PR that touches it; deploy to Cloudflare from main.
+#
+# Deploying needs two repository secrets, CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (see
+# campfire/README.md, "Setting it up"). Until both exist the deploy is skipped with a notice, so the
+# workflow stays green. CAMPFIRE_HOST_KEY is optional: when set it becomes the Worker's secret of the same
+# name and turns on host posting and deleting.
+name: Campfire
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'campfire/**'
+      - '.github/workflows/campfire.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'campfire/**'
+      - '.github/workflows/campfire.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One deploy at a time; PR runs only replace older runs of the same PR.
+  group: campfire-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: campfire
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: campfire/.nvmrc
+          cache: npm
+          cache-dependency-path: campfire/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build (dry run)
+        run: npx wrangler deploy --dry-run --outdir dist
+
+  deploy:
+    name: Deploy
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+      HAS_HOST_KEY: ${{ secrets.CAMPFIRE_HOST_KEY != '' }}
+    steps:
+      - name: Check for Cloudflare secrets
+        if: env.HAS_CLOUDFLARE != 'true'
+        run: |
+          msg="Skipping deploy: add the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets, then run this workflow again (campfire/README.md, 'Setting it up')."
+          echo "::notice title=Campfire not deployed::$msg"
+          echo "### Campfire not deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@v7
+        if: env.HAS_CLOUDFLARE == 'true'
+      - uses: actions/setup-node@v7
+        if: env.HAS_CLOUDFLARE == 'true'
+        with:
+          node-version-file: campfire/.nvmrc
+          cache: npm
+          cache-dependency-path: campfire/package-lock.json
+      - run: npm ci
+        if: env.HAS_CLOUDFLARE == 'true'
+
+      - name: Deploy to Cloudflare
+        id: deploy
+        if: env.HAS_CLOUDFLARE == 'true'
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: campfire
+          command: deploy
+          # Only upload the host key when there is one (an empty secret would fail the upload). On the very
+          # first run wrangler-action uploads it before deploying, so Wrangler makes a placeholder Worker to
+          # hold it and the deploy replaces that a moment later.
+          secrets: ${{ env.HAS_HOST_KEY == 'true' && 'CAMPFIRE_HOST_KEY' || '' }}
+        env:
+          CAMPFIRE_HOST_KEY: ${{ secrets.CAMPFIRE_HOST_KEY }}
+
+      - name: Say hello
+        if: env.HAS_CLOUDFLARE == 'true' && steps.deploy.outputs.deployment-url != ''
+        env:
+          URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          echo "### Campfire deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+          # A brand-new workers.dev name can take a minute to resolve, so this only warns.
+          for i in 1 2 3 4 5 6; do
+            if body=$(curl -fsS "$URL/"); then echo "$body"; exit 0; fi
+            sleep 10
+          done
+          echo "::warning::Deployed, but $URL/ didn't answer yet. Try it in a minute."
