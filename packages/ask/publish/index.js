@@ -1,11 +1,9 @@
-// DigitalOcean entry point for ask/publish (see publish.js).
+// DigitalOcean entry point for ask/publish (see publish.js). The runtime is pinned to nodejs:24 in
+// project.yml, so fetch and AbortController are built in and this function has no dependencies.
 const { handle } = require('./publish');
 
-// The runtime's own fetch when it has one (Node 18+), node-fetch otherwise.
-const fetchImpl = typeof fetch === 'function' ? fetch : require('node-fetch');
-
 async function main(args) {
-  return handle(args, { fetch: fetchImpl, env: process.env, now: new Date() });
+  return handle(args, { fetch, env: process.env, now: new Date() });
 }
 
 exports.main = main;

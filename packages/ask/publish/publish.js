@@ -4,8 +4,8 @@
 //                  Discord or a browser may fetch the link on its own.
 //   POST p, s      checks it all again, then opens (or finds) the PR and redirects to it.
 
-const { readLink, usableSecret, expiresAt } = require('./publish-link');
-const { filePath, fileContent } = require('./entry');
+const { readLink, usableSecret, expiresAt, methodOf } = require('./publish-link');
+const { filePath, fileContent, prTitle } = require('./entry');
 const { publish, existingPr, GitHubError } = require('./github');
 const { confirmPage, usedPage, openedPage, errorPage } = require('./pages');
 
@@ -17,11 +17,6 @@ function setting(env, name) {
   return value.startsWith('${') ? '' : value;
 }
 
-function methodOf(args) {
-  const method = (args.http && args.http.method) || args.__ow_method || 'get';
-  return String(method).toLowerCase();
-}
-
 const LINK_ERRORS = {
   missing: [400, 'No link here', 'This page needs the whole "Publish as PR" link from Discord.'],
   signature: [403, 'Not a valid link', 'This link wasn\'t made by ask/submit, or it was changed or cut short. Copy the whole link from Discord.'],
@@ -31,7 +26,10 @@ const LINK_ERRORS = {
 
 function githubErrorPage(error) {
   if (error.rateLimited) {
-    return errorPage(503, 'GitHub says slow down', 'GitHub\'s rate limit was hit. Try again in a few minutes; it won\'t open a second PR.');
+    return errorPage(503, 'GitHub says slow down', 'GitHub\'s rate limit was hit. Try again in a minute; it won\'t open a second PR.');
+  }
+  if (error.timedOut) {
+    return errorPage(504, 'GitHub is slow', `GitHub didn't answer in time (${error.step}). Try again in a minute; it won't open a second PR.`);
   }
   if (error.status === 401) {
     return errorPage(502, 'GitHub refused the token',
@@ -52,10 +50,10 @@ function githubErrorPage(error) {
 /**
  * Handles one request. `deps` = { fetch, env, now } so tests can stand in for GitHub and the clock.
  */
-async function handle(args, { fetch, env, now = new Date() }) {
+async function handle(args, { fetch, env, now = new Date(), callTimeoutMs, budgetMs }) {
   const method = methodOf(args);
   if (method !== 'get' && method !== 'head' && method !== 'post') {
-    return errorPage(405, 'Method not allowed', 'This page only takes GET and POST.');
+    return errorPage(405, 'Method not allowed', 'This page only takes GET, HEAD and POST.');
   }
 
   const secret = usableSecret(setting(env, 'PUBLISH_SECRET'));
@@ -70,12 +68,13 @@ async function handle(args, { fetch, env, now = new Date() }) {
   if (!token) return errorPage(503, 'Publishing is off', 'GITHUB_TOKEN isn\'t set (README). The suggestion is still in Discord.');
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return errorPage(503, 'Publishing is misconfigured', 'GITHUB_REPO should look like owner/repo.');
 
-  const github = { fetch, token, repo };
+  const github = { fetch, token, repo, callTimeoutMs, budgetMs };
   try {
     if (method !== 'post') {
       const pr = await existingPr(github, item);
       if (pr) return usedPage(pr);
-      return confirmPage(item, filePath(item), fileContent(item), args.p, args.s, expiresAt(item.iat));
+      const entry = { title: prTitle(item), path: filePath(item), content: fileContent(item) };
+      return confirmPage(item, entry, args.p, args.s, expiresAt(item.iat));
     }
     const { pr, existed } = await publish(github, item);
     return openedPage(pr, existed);

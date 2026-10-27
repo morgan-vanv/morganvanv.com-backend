@@ -9,6 +9,7 @@ const STYLE = [
   'h1{font-size:1.25rem;color:#f0c674;margin:0 0 1rem}',
   'p{margin:0 0 1rem}',
   '.dim{color:#9aa0aa}',
+  '.warn{color:#f0c674;margin-top:1rem}',
   'code{color:#f0c674;overflow-wrap:anywhere}',
   'pre{background:#141a28;border:1px solid #2a3142;border-radius:6px;padding:1rem;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere}',
   'a{color:#8ab4f8}',
@@ -81,35 +82,43 @@ function prLink(pr) {
 }
 
 /** GET: what will be published, where, and the one button that does it. */
-function confirmPage(item, path, content, p, s, expires) {
+function confirmPage(item, { title, path, content }, p, s, expires) {
   return page(200, `Publish ${KIND_NAMES[item.kind]}?`, `
-<p>This opens a pull request on the site's repo adding one file. Nothing goes live until you merge it.</p>
-<p class="dim">File: <code>${escapeHtml(path)}</code></p>
+<p>This opens a pull request on the site's repo adding one file. Nothing goes live on the site until you merge it.</p>
+<p class="dim">PR: <code>${escapeHtml(title)}</code><br>File: <code>${escapeHtml(path)}</code></p>
 <pre>${escapeHtml(content)}</pre>
 <form method="post">
 <input type="hidden" name="p" value="${escapeHtml(p)}">
 <input type="hidden" name="s" value="${escapeHtml(s)}">
 <button type="submit">Open the pull request</button>
+<p class="warn">Opening the PR makes this text public on GitHub, even if you close it later.</p>
 </form>
 <p class="dim">This link works until ${escapeHtml(expires.toISOString().slice(0, 10))}.</p>`);
 }
 
+const STATES = { open: 'open', closed: 'closed', merged: 'merged' };
+
+function alreadyTitle(pr) {
+  return `Already published (${STATES[pr.state] || 'unknown'})`;
+}
+
 /** GET for a link that has already been used. */
 function usedPage(pr) {
-  return page(200, 'Already published', `
-<p>This link already opened ${prLink(pr)} (${escapeHtml(pr.state)}).</p>`);
+  return page(200, alreadyTitle(pr), `
+<p>This link already opened ${prLink(pr)}, which is ${escapeHtml(STATES[pr.state] || 'in an unknown state')}.</p>`);
 }
 
 /** POST succeeded: straight to the PR. The body is for anything that doesn't follow redirects. */
 function openedPage(pr, existed) {
   const url = githubUrl(pr.url);
-  const inner = `<p>${existed ? 'It was already open:' : 'Opened'} ${prLink(pr)}.</p>`;
-  if (!url) return page(200, existed ? 'Already published' : 'Pull request opened', inner);
-  return page(303, existed ? 'Already published' : 'Pull request opened', inner, { Location: url });
+  const title = existed ? alreadyTitle(pr) : 'Pull request opened';
+  const inner = `<p>${existed ? 'This link already opened' : 'Opened'} ${prLink(pr)}.</p>`;
+  if (!url) return page(200, title, inner);
+  return page(303, title, inner, { Location: url });
 }
 
 function errorPage(statusCode, title, message) {
-  return page(statusCode, title, `\n<p>${escapeHtml(message)}</p>`, statusCode === 405 ? { Allow: 'GET, POST' } : {});
+  return page(statusCode, title, `\n<p>${escapeHtml(message)}</p>`, statusCode === 405 ? { Allow: 'GET, HEAD, POST' } : {});
 }
 
 module.exports = { escapeHtml, confirmPage, usedPage, openedPage, errorPage, CSP, HEADERS };

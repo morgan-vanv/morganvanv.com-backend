@@ -1,7 +1,7 @@
 // Run with: node --test
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { problem, discordPayload, approveEntry, publishConfig } = require('../packages/ask/submit/embed');
+const { problem, discordPayload, approveEntry, publishConfig, matchesMessage, discordEscape } = require('../packages/ask/submit/embed');
 
 const now = new Date('2026-10-27T05:00:00Z');
 
@@ -98,12 +98,34 @@ test('anything outside the form\'s limits gets no entry', () => {
 const { readLink } = require('../packages/ask/submit/publish-link');
 
 const publish = { url: 'https://faas-nyc1-x.doserverless.co/api/v1/web/fn-x/ask/publish', secret: 's'.repeat(64) };
-const hex = () => 'beef';
+const hex = () => 'beefcafe';
+
+// Exactly what the site's form sends (contact-submission.ts, sky-naming.ts).
+function subtitleArgs(subtitle, credit) {
+  const entry = `{ text: '${subtitle}', by: ${credit === null ? 'null' : `'${credit}'`}, added: '2026-10' },`;
+  return { kind: 'subtitle', question: `✨ Subtitle suggestion\n"${subtitle}"\ncredit: ${credit ?? 'anonymous'}\napprove: ${entry}`, subtitle, credit };
+}
+function starArgs(name, credit, star) {
+  const where = star.near ? `unnamed star near ${star.near}` : 'unnamed star';
+  const question = [
+    '⭐ Star name suggestion',
+    `${JSON.stringify(name)} for the ${where} (magnitude ${star.mag.toFixed(1)})`,
+    `named by: ${credit ?? 'anonymous'}`,
+    `approve: [${[star.ra, star.dec, name, credit, '2026-10'].map(v => JSON.stringify(v)).join(', ')}]`,
+  ].join('\n');
+  return { kind: 'star', question, name, credit, star };
+}
+function questionArgs(text) {
+  return { kind: 'question', question: `❓ Question\n${text}`, text };
+}
+
+function field(embed, name) {
+  return embed.fields.find(f => f.name === name)?.value;
+}
 
 function linkIn(embed) {
-  const field = embed.fields.find(f => f.name === 'Publish');
-  const match = /^\[Publish as PR\]\((https:\/\/[^)]+)\)$/.exec(field.value);
-  assert.ok(match, field.value);
+  const match = /^\[Publish as PR\]\((https:\/\/[^)]+)\)$/.exec(field(embed, 'Publish'));
+  assert.ok(match, field(embed, 'Publish'));
   const query = new URL(match[1]).searchParams;
   return readLink(query.get('p'), query.get('s'), publish.secret, now);
 }
@@ -118,21 +140,51 @@ test('publishing is on only with an https PUBLISH_URL and a long enough PUBLISH_
   assert.deepEqual(publishConfig({ PUBLISH_URL: ` ${publish.url} `, PUBLISH_SECRET: publish.secret }), publish);
 });
 
-test('with publishing on, a subtitle gets a Publish as PR link instead of the entry to paste', () => {
-  const args = { kind: 'subtitle', question: '✨ Subtitle suggestion\n"a certified night owl"', subtitle: 'a certified night owl', credit: 'sam' };
-  const { embeds: [embed] } = discordPayload(args, now, publish, hex);
-  assert.deepEqual(embed.fields.map(f => f.name), ['Publish']);
+test('with publishing on, a subtitle shows exactly what it publishes and a link, instead of the entry to paste', () => {
+  const { embeds: [embed] } = discordPayload(subtitleArgs('a certified night owl', 'sam'), now, publish, hex);
+  assert.deepEqual(embed.fields.map(f => f.name), ['Will publish', 'Publish']);
+  assert.equal(field(embed, 'Will publish'), '```\ntext: "a certified night owl"\nby: "sam"\n```');
   const link = linkIn(embed);
   assert.equal(link.ok, true);
   assert.deepEqual(link.item.fields, { text: 'a certified night owl', by: 'sam' });
-  assert.equal(link.item.id, '2026-10-27-a-certified-night-owl-beef');
+  assert.equal(link.item.id, '2026-10-27-a-certified-night-owl-beefcafe');
 });
 
 test('with publishing on, a star name and a question get links too', () => {
-  const starArgs = { kind: 'star', question: '⭐ Star name suggestion', name: 'Gerald', credit: null, star: { ra: 283.626, dec: 36.899, mag: 4.3, near: 'Vega' } };
-  assert.deepEqual(linkIn(discordPayload(starArgs, now, publish, hex).embeds[0]).item.fields, { ra: 283.626, dec: 36.899, name: 'Gerald', by: null, near: 'Vega' });
-  const questionArgs = { kind: 'question', question: '❓ Question\nwhy the cat?', text: 'why the cat?' };
-  assert.deepEqual(linkIn(discordPayload(questionArgs, now, publish, hex).embeds[0]).item.fields, { text: 'why the cat?' });
+  const { embeds: [starred] } = discordPayload(starArgs('Gerald', null, { ra: 283.626, dec: 36.899, mag: 4.3, near: 'Vega' }), now, publish, hex);
+  assert.deepEqual(linkIn(starred).item.fields, { ra: 283.626, dec: 36.899, name: 'Gerald', by: null, near: 'Vega' });
+  assert.equal(field(starred, 'Will publish'), '```\nname: "Gerald"\nby: null\nra: 283.626, dec: 36.899\nnear: "Vega"\n```');
+
+  const { embeds: [asked] } = discordPayload(questionArgs('why the cat?\nreally'), now, publish, hex);
+  assert.deepEqual(linkIn(asked).item.fields, { text: 'why the cat?\nreally' });
+  assert.equal(field(asked, 'Will publish'), '```\nwhy the cat?\nreally\n```');
+});
+
+test('what it publishes is escaped, not put in a code block, when it has a backtick', () => {
+  const { embeds: [embed] } = discordPayload(questionArgs('is `code` *bold* <@123> [x](y)?'), now, publish, hex);
+  assert.equal(field(embed, 'Will publish'), 'is \\`code\\` \\*bold\\* \\<@123\\> \\[x\\]\\(y\\)?');
+  assert.equal(discordEscape('a_b~c|d#e-f\\g'), 'a\\_b\\~c\\|d\\#e\\-f\\\\g');
+});
+
+test('no link when the message doesn\'t say what the fields would publish', () => {
+  const differs = [
+    { ...subtitleArgs('a certified night owl', 'sam'), subtitle: 'something else' },
+    { ...subtitleArgs('a certified night owl', 'sam'), credit: 'mallory' },
+    { ...subtitleArgs('hi', null), question: '✨ Subtitle suggestion\n"hi"\ncredit: anonymous\nand an extra line' },
+    { ...starArgs('Gerald', null, { ra: 1, dec: 2, mag: 4.3, near: 'Vega' }), name: 'Mallory' },
+    { ...starArgs('Gerald', null, { ra: 1, dec: 2, mag: 4.3, near: 'Vega' }), star: { ra: 1, dec: 2, near: 'Vega' } },
+    { ...questionArgs('why the cat?'), text: 'something else entirely' },
+    { kind: 'question', question: 'why the cat?', text: 'why the cat?' },
+  ];
+  for (const args of differs) {
+    const { embeds: [embed] } = discordPayload(args, now, publish, hex);
+    assert.deepEqual(embed.fields.filter(f => f.name !== 'To approve, paste this'), [
+      { name: 'Publish', value: 'No publish link: the message above doesn\'t match the fields that would be published.' },
+    ]);
+  }
+  assert.equal(matchesMessage(subtitleArgs('hi', null)), true);
+  assert.equal(matchesMessage(starArgs('G', 'sam', { ra: 1, dec: 2, mag: 3 })), true);
+  assert.equal(matchesMessage(questionArgs('hi\n\nthere')), true);
 });
 
 test('the anonymous dropbox never gets a link', () => {
@@ -141,22 +193,32 @@ test('the anonymous dropbox never gets a link', () => {
 });
 
 test('with publishing off, nothing changes', () => {
-  const args = { kind: 'subtitle', question: '✨ Subtitle suggestion\n"hi"', subtitle: 'hi', credit: null };
+  const args = subtitleArgs('hi', null);
   assert.deepEqual(discordPayload(args, now, null), discordPayload(args, now));
   assert.deepEqual(discordPayload(args, now).embeds[0].fields.map(f => f.name), ['To approve, paste this']);
 });
 
 test('a suggestion that doesn\'t fit the form says why it has no link', () => {
-  const { embeds: [embed] } = discordPayload({ kind: 'subtitle', question: '✨ Subtitle suggestion\nx', subtitle: 'x'.repeat(61) }, now, publish, hex);
-  assert.deepEqual(embed.fields, [{ name: 'Publish', value: 'No publish link: this doesn\'t match what the form sends.' }]);
+  const { embeds: [embed] } = discordPayload(subtitleArgs('x'.repeat(61), null), now, publish, hex);
+  assert.deepEqual(embed.fields, [{ name: 'Publish', value: 'No publish link: this doesn\'t fit the form\'s limits.' }]);
 });
 
-test('a question too long for any link says so, and the link stays within Discord\'s limits otherwise', () => {
+test('a question with <!-- in it gets no link, and says so', () => {
+  const { embeds: [embed] } = discordPayload(questionArgs('hi <!-- there -->'), now, publish, hex);
+  assert.deepEqual(embed.fields, [{ name: 'Publish', value: 'No publish link: the question contains `<!--`. Add it to the site by hand.' }]);
+});
+
+test('a question too long for any link says so, and fields stay within Discord\'s limits otherwise', () => {
   let text = '';
   for (let i = 0; text.length < 500; i++) text += String.fromCodePoint(0x4e00 + ((i * 7919) % 20000));
-  const { embeds: [tooLong] } = discordPayload({ kind: 'question', question: '❓ Question\n…', text }, now, publish, hex);
+  const { embeds: [tooLong] } = discordPayload(questionArgs(text), now, publish, hex);
   assert.match(tooLong.fields[0].value, /^No publish link: too long/);
 
-  const { embeds: [fits] } = discordPayload({ kind: 'question', question: '❓ Question\n…', text: 'x'.repeat(500) }, now, publish, hex);
-  assert.ok(fits.fields[0].value.length <= 1024);
+  const { embeds: [fits] } = discordPayload(questionArgs('x'.repeat(500)), now, publish, hex);
+  assert.equal(fits.fields.length, 2);
+  for (const f of fits.fields) assert.ok(f.value.length <= 1024);
+
+  // Even 500 characters that each need escaping still fit in a field.
+  const { embeds: [escaped] } = discordPayload(questionArgs('`*'.repeat(250)), now, publish, hex);
+  assert.equal(field(escaped, 'Will publish').length, 1000);
 });

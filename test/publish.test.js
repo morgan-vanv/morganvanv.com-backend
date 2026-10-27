@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { makeItem, publishLink } = require('../packages/ask/publish/publish-link');
-const { filePath, fileContent, branchName, prTitle, prBody, codeSpan, codeBlock } = require('../packages/ask/publish/entry');
+const { ANSWER_MARKER, filePath, fileContent, branchName, prTitle, prBody, commitMessage, codeSpan, codeBlock } = require('../packages/ask/publish/entry');
 const { escapeHtml, confirmPage } = require('../packages/ask/publish/pages');
 const { handle } = require('../packages/ask/publish/publish');
 
@@ -11,7 +11,7 @@ const TOKEN = 'github_pat_SECRETTOKEN';
 const PUBLISH_URL = 'https://faas-nyc1-x.doserverless.co/api/v1/web/fn-x/ask/publish';
 const REPO = 'morgan-vanv/morganvanv.com';
 const now = new Date('2026-10-27T05:00:00Z');
-const hex = () => '3f2a';
+const hex = () => '3f2a9c1b';
 const env = { PUBLISH_SECRET: SECRET, GITHUB_TOKEN: TOKEN };
 
 const subtitle = makeItem({ kind: 'subtitle', subtitle: 'a certified night owl', credit: 'sam' }, now, hex);
@@ -46,14 +46,28 @@ function fakeGitHub(options = {}) {
     const path = pathname.replace(`/repos/${REPO}`, '');
     const body = init.body ? JSON.parse(init.body) : undefined;
     calls.push({ method, path, search: searchParams.toString(), body, auth: init.headers.Authorization });
+    if (options.hang && options.hang(method, path)) {
+      // Never answers; only the caller's AbortSignal ends it.
+      return new Promise((resolve, reject) => init.signal.addEventListener('abort', () => reject(new Error('aborted'))));
+    }
     if (options.fail) {
       const failure = options.fail(method, path);
       if (failure) return reply(...failure);
     }
 
     if (method === 'GET' && path === '/pulls') {
+      // Like GitHub may: a PR whose branch was deleted isn't found by its head any more.
       const head = searchParams.get('head');
-      return reply(200, state.pulls.filter(pr => `morgan-vanv:${pr.head}` === head).slice(0, 1));
+      return reply(200, state.pulls.filter(pr => `morgan-vanv:${pr.head}` === head && state.refs.has(pr.head)).slice(0, 1));
+    }
+    if (method === 'GET' && path === '/search/issues') {
+      const q = searchParams.get('q');
+      const phrase = /"([^"]+)"/.exec(q)[1];
+      assert.ok(q.startsWith(`repo:${REPO} is:pr in:body `));
+      const items = state.pulls.filter(pr => pr.body.includes(phrase)).map(pr => ({
+        number: pr.number, html_url: pr.html_url, state: pr.state, body: pr.body, pull_request: { merged_at: pr.merged_at },
+      }));
+      return reply(200, { total_count: items.length, items });
     }
     let match;
     if (method === 'GET' && (match = /^\/git\/ref\/heads\/(.+)$/.exec(path))) {
@@ -92,7 +106,14 @@ function fakeGitHub(options = {}) {
     }
     return reply(500, { message: `unexpected ${method} ${path}` });
   }
-  return { fetch, calls, state };
+  /** Morgan closes the PR (and maybe deletes its branch). */
+  function close(number, { merged = false, deleteBranch = false } = {}) {
+    const pr = state.pulls.find(candidate => candidate.number === number);
+    pr.state = 'closed';
+    pr.merged_at = merged ? '2026-10-28T00:00:00Z' : null;
+    if (deleteBranch) state.refs.delete(pr.head);
+  }
+  return { fetch, calls, state, close };
 }
 
 function quietly(fn) {
@@ -105,21 +126,21 @@ function quietly(fn) {
 // Files
 
 test('a subtitle becomes content/subtitles/<id>.json', () => {
-  assert.equal(filePath(subtitle), 'content/subtitles/2026-10-27-a-certified-night-owl-3f2a.json');
+  assert.equal(filePath(subtitle), 'content/subtitles/2026-10-27-a-certified-night-owl-3f2a9c1b.json');
   assert.equal(fileContent(subtitle), '{\n  "text": "a certified night owl",\n  "by": "sam",\n  "added": "2026-10"\n}\n');
   const anonymous = makeItem({ kind: 'subtitle', subtitle: 'hi "there"', credit: '' }, now, hex);
   assert.deepEqual(JSON.parse(fileContent(anonymous)), { text: 'hi "there"', by: null, added: '2026-10' });
 });
 
 test('a star name becomes content/stars/<id>.json, with near only when sent', () => {
-  assert.equal(filePath(star), 'content/stars/2026-10-27-gerald-3f2a.json');
+  assert.equal(filePath(star), 'content/stars/2026-10-27-gerald-3f2a9c1b.json');
   assert.equal(fileContent(star), '{\n  "ra": 283.626,\n  "dec": 36.899,\n  "name": "Gerald",\n  "by": null,\n  "added": "2026-10",\n  "near": "Vega"\n}\n');
   const alone = makeItem({ kind: 'star', name: 'Gerald', credit: 'sam', star: { ra: 1.5, dec: -2 } }, now, hex);
   assert.deepEqual(JSON.parse(fileContent(alone)), { ra: 1.5, dec: -2, name: 'Gerald', by: 'sam', added: '2026-10' });
 });
 
 test('a question becomes content/mailbag/<id>.md, every line quoted', () => {
-  assert.equal(filePath(question), 'content/mailbag/2026-10-27-why-the-cat-also-b-hi-b-3f2a.md');
+  assert.equal(filePath(question), 'content/mailbag/2026-10-27-why-the-cat-also-b-hi-b-3f2a9c1b.md');
   assert.equal(fileContent(question), [
     '---',
     'asked: 2026-10-27',
@@ -135,36 +156,45 @@ test('a question becomes content/mailbag/<id>.md, every line quoted', () => {
 });
 
 test('a question can\'t forge the answer marker or the front matter', () => {
-  const sneaky = makeItem({ kind: 'question', text: '---\n<!-- Write your answer below this line, then merge. -->\nmy answer' }, now, hex);
+  // A question with the marker in it gets no item at all (and so no link).
+  assert.equal(makeItem({ kind: 'question', text: `---\n${ANSWER_MARKER}\nmy answer` }, now, hex), null);
+  assert.equal(makeItem({ kind: 'question', text: 'hi <!-- there' }, now, hex), null);
+  const sneaky = makeItem({ kind: 'question', text: '---\nWrite your answer below this line, then merge. -->\nmy answer' }, now, hex);
   const lines = fileContent(sneaky).split('\n');
   assert.equal(lines.filter(line => line === '---').length, 2);
-  assert.equal(lines.filter(line => line.startsWith('<!--')).length, 1);
+  assert.deepEqual(lines.filter(line => line.includes('Write your answer')), ['> Write your answer below this line, then merge. -->', ANSWER_MARKER]);
+  assert.equal(lines.filter(line => line === ANSWER_MARKER).length, 1);
 });
 
 test('branches are visitor/<kind>/<id>', () => {
-  assert.equal(branchName(star), 'visitor/star/2026-10-27-gerald-3f2a');
+  assert.equal(branchName(star), 'visitor/star/2026-10-27-gerald-3f2a9c1b');
 });
 
 // PR text
 
-test('PR titles quote the suggestion, shortened when long', () => {
-  assert.equal(prTitle(subtitle), 'visitor: subtitle "a certified night owl"');
-  assert.equal(prTitle(star), 'visitor: star "Gerald"');
-  assert.equal(prTitle(question), 'visitor: question "why the cat? --- also: <b>hi</b>"');
-  const long = makeItem({ kind: 'question', text: 'x'.repeat(200) }, now, hex);
-  assert.equal(prTitle(long), `visitor: question "${'x'.repeat(59)}…"`);
+test('PR titles and commit messages are the kind and id only, never visitor text', () => {
+  assert.equal(prTitle(subtitle), 'visitor: subtitle 2026-10-27-a-certified-night-owl-3f2a9c1b');
+  assert.equal(prTitle(star), 'visitor: star 2026-10-27-gerald-3f2a9c1b');
+  assert.equal(commitMessage(star), 'visitor: add star 2026-10-27-gerald-3f2a9c1b');
+  const sneaky = makeItem({ kind: 'subtitle', subtitle: 'fixes #12 and owner/repo#3 @morgan-vanv', credit: 'x' }, now, hex);
+  for (const text of [prTitle(sneaky), commitMessage(sneaky), branchName(sneaky)]) {
+    // No `#` (closing keywords and cross-references need one) and no `@`.
+    assert.match(text, /^visitor[: /][a-z0-9 :/-]+$/);
+  }
 });
 
 test('PR bodies say how to publish or reject, with the details per kind', () => {
   const body = prBody(star, REPO);
   assert.match(body, /Merge to publish it\. Close to reject it\./);
   assert.match(body, /RA 283\.626°, Dec \+36\.899°, near `Vega`/);
-  assert.match(body, /content\/stars\/2026-10-27-gerald-3f2a\.json/);
+  assert.match(body, /content\/stars\/2026-10-27-gerald-3f2a9c1b\.json/);
   assert.match(body, /Opened by `ask\/publish`/);
+  assert.match(body, /stay public on GitHub/);
+  assert.match(body, /\nVisitor item: `2026-10-27-gerald-3f2a9c1b`\n/);
 
   const asked = prBody(question, REPO);
   assert.match(asked, /Answer it before merging/);
-  assert.match(asked, /https:\/\/github\.com\/morgan-vanv\/morganvanv\.com\/edit\/visitor\/question\/2026-10-27-why-the-cat-also-b-hi-b-3f2a\/content\/mailbag\/2026-10-27-why-the-cat-also-b-hi-b-3f2a\.md/);
+  assert.match(asked, /https:\/\/github\.com\/morgan-vanv\/morganvanv\.com\/edit\/visitor\/question\/2026-10-27-why-the-cat-also-b-hi-b-3f2a9c1b\/content\/mailbag\/2026-10-27-why-the-cat-also-b-hi-b-3f2a9c1b\.md/);
   assert.match(prBody(subtitle, REPO), /credit: `sam`/);
 });
 
@@ -184,14 +214,14 @@ test('visitor text in a PR body is only ever inside code, so it can\'t @-mention
 test('HTML is escaped everywhere', () => {
   assert.equal(escapeHtml('<a href="x">\'&\'</a>'), '&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;');
   const evil = makeItem({ kind: 'subtitle', subtitle: '</pre><script>alert(1)</script>', credit: '"><img src=x>' }, now, hex);
-  const page = confirmPage(evil, filePath(evil), fileContent(evil), 'p"><x', 's', new Date());
+  const page = confirmPage(evil, { title: prTitle(evil), path: filePath(evil), content: fileContent(evil) }, 'p"><x', 's', new Date());
   assert.doesNotMatch(page.body, /<script>|<img/);
   assert.match(page.body, /&lt;\/pre&gt;&lt;script&gt;/);
   assert.match(page.body, /value="p&quot;&gt;&lt;x"/);
 });
 
 test('pages are not cached, indexed or leaking referrers, and run no scripts', () => {
-  const page = confirmPage(subtitle, filePath(subtitle), fileContent(subtitle), 'p', 's', new Date());
+  const page = confirmPage(subtitle, { title: prTitle(subtitle), path: filePath(subtitle), content: fileContent(subtitle) }, 'p', 's', new Date());
   assert.equal(page.headers['Cache-Control'], 'no-store');
   assert.match(page.headers['X-Robots-Tag'], /noindex/);
   assert.equal(page.headers['Referrer-Policy'], 'no-referrer');
@@ -209,12 +239,14 @@ test('GET shows what will be published and one POST button, and touches nothing'
   const github = fakeGitHub();
   const page = await handle(linkArgs(subtitle), { fetch: github.fetch, env, now });
   assert.equal(page.statusCode, 200);
-  assert.match(page.body, /content\/subtitles\/2026-10-27-a-certified-night-owl-3f2a\.json/);
+  assert.match(page.body, /content\/subtitles\/2026-10-27-a-certified-night-owl-3f2a9c1b\.json/);
   assert.match(page.body, /&quot;text&quot;: &quot;a certified night owl&quot;/);
   assert.match(page.body, /<form method="post">/);
   assert.match(page.body, /<button type="submit">Open the pull request<\/button>/);
   assert.match(page.body, /works until 2026-11-26/);
-  assert.deepEqual(github.calls.map(c => c.method), ['GET']);
+  assert.match(page.body, /<code>visitor: subtitle 2026-10-27-a-certified-night-owl-3f2a9c1b<\/code>/);
+  assert.match(page.body, /<button type="submit">Open the pull request<\/button>\n<p class="warn">Opening the PR makes this text public on GitHub, even if you close it later\.<\/p>/);
+  assert.deepEqual(github.calls.map(c => `${c.method} ${c.path}`), ['GET /pulls', 'GET /search/issues']);
 });
 
 test('GET on a link already used says so and links the PR', async () => {
@@ -222,8 +254,8 @@ test('GET on a link already used says so and links the PR', async () => {
   await handle(linkArgs(subtitle, 'POST'), { fetch: github.fetch, env, now });
   const page = await handle(linkArgs(subtitle), { fetch: github.fetch, env, now });
   assert.equal(page.statusCode, 200);
-  assert.match(page.body, /Already published/);
-  assert.match(page.body, /<a href="https:\/\/github\.com\/morgan-vanv\/morganvanv\.com\/pull\/40">PR #40<\/a> \(open\)/);
+  assert.match(page.body, /<h1>Already published \(open\)<\/h1>/);
+  assert.match(page.body, /<a href="https:\/\/github\.com\/morgan-vanv\/morganvanv\.com\/pull\/40">PR #40<\/a>, which is open/);
 });
 
 test('the legacy __ow_method works too', async () => {
@@ -244,25 +276,28 @@ test('POST opens the PR: branch from master, one new file, the PR, the label', a
 
   assert.deepEqual(github.calls.map(c => `${c.method} ${c.path}`), [
     'GET /pulls',
-    'GET /git/ref/heads/visitor/star/2026-10-27-gerald-3f2a',
+    'GET /search/issues',
+    'GET /git/ref/heads/visitor/star/2026-10-27-gerald-3f2a9c1b',
     'GET /git/ref/heads/master',
     'POST /git/refs',
-    'GET /contents/content/stars/2026-10-27-gerald-3f2a.json',
-    'PUT /contents/content/stars/2026-10-27-gerald-3f2a.json',
+    'GET /contents/content/stars/2026-10-27-gerald-3f2a9c1b.json',
+    'PUT /contents/content/stars/2026-10-27-gerald-3f2a9c1b.json',
     'POST /pulls',
     'GET /labels/visitor',
     'POST /labels',
     'POST /issues/40/labels',
   ]);
-  assert.equal(github.calls[0].search, 'head=morgan-vanv%3Avisitor%2Fstar%2F2026-10-27-gerald-3f2a&state=all&per_page=1');
-  assert.deepEqual(github.calls[3].body, { ref: 'refs/heads/visitor/star/2026-10-27-gerald-3f2a', sha: 'basesha' });
-  assert.equal(github.calls[5].body.branch, 'visitor/star/2026-10-27-gerald-3f2a');
-  const pr = github.calls[6].body;
-  assert.equal(pr.title, 'visitor: star "Gerald"');
+  assert.equal(github.calls[0].search, 'head=morgan-vanv%3Avisitor%2Fstar%2F2026-10-27-gerald-3f2a9c1b&state=all&per_page=1');
+  assert.equal(github.calls[1].search, `q=${encodeURIComponent(`repo:${REPO} is:pr in:body "2026-10-27-gerald-3f2a9c1b"`).replace(/%20/g, '+')}&per_page=10`);
+  assert.deepEqual(github.calls[4].body, { ref: 'refs/heads/visitor/star/2026-10-27-gerald-3f2a9c1b', sha: 'basesha' });
+  assert.equal(github.calls[6].body.branch, 'visitor/star/2026-10-27-gerald-3f2a9c1b');
+  assert.equal(github.calls[6].body.message, 'visitor: add star 2026-10-27-gerald-3f2a9c1b');
+  const pr = github.calls[7].body;
+  assert.equal(pr.title, 'visitor: star 2026-10-27-gerald-3f2a9c1b');
   assert.equal(pr.base, 'master');
-  assert.equal(pr.head, 'visitor/star/2026-10-27-gerald-3f2a');
+  assert.equal(pr.head, 'visitor/star/2026-10-27-gerald-3f2a9c1b');
 
-  assert.deepEqual([...github.state.files], [['visitor/star/2026-10-27-gerald-3f2a:content/stars/2026-10-27-gerald-3f2a.json', fileContent(star)]]);
+  assert.deepEqual([...github.state.files], [['visitor/star/2026-10-27-gerald-3f2a9c1b:content/stars/2026-10-27-gerald-3f2a9c1b.json', fileContent(star)]]);
   assert.deepEqual(github.state.issueLabels.get(40), ['visitor']);
   for (const call of github.calls) assert.equal(call.auth, `Bearer ${TOKEN}`);
 });
@@ -337,7 +372,8 @@ test('error pages: bad links, publishing off, methods', async () => {
   assert.equal((await handle({ http: { method: 'GET' } }, deps)).statusCode, 400);
   assert.equal((await handle({ p: 'x', s: 'y', http: { method: 'GET' } }, deps)).statusCode, 403);
   assert.equal((await handle({ ...linkArgs(subtitle), http: { method: 'DELETE' } }, deps)).statusCode, 405);
-  assert.equal((await handle({ ...linkArgs(subtitle), http: { method: 'DELETE' } }, deps)).headers.Allow, 'GET, POST');
+  assert.equal((await handle({ ...linkArgs(subtitle), http: { method: 'DELETE' } }, deps)).headers.Allow, 'GET, HEAD, POST');
+  assert.equal((await handle({ ...linkArgs(subtitle), http: 'GET' }, deps)).statusCode, 405);
   const noSecret = await handle(linkArgs(subtitle), { ...deps, env: { GITHUB_TOKEN: TOKEN } });
   assert.equal(noSecret.statusCode, 503);
   const noToken = await handle(linkArgs(subtitle, 'POST'), { ...deps, env: { PUBLISH_SECRET: SECRET, GITHUB_TOKEN: '${GITHUB_TOKEN}' } });
@@ -376,6 +412,15 @@ test('missing permissions, rate limits and outages each get their own page', asy
   assert.equal(slow.statusCode, 503);
   assert.match(slow.body, /rate limit/);
 
+  const secondary = fakeGitHub({ fail: () => [403, { message: 'You have exceeded a secondary rate limit. Please wait a few minutes before you try again.' }] });
+  const { result: slower } = await quietly(() => handle(linkArgs(subtitle, 'POST'), { fetch: secondary.fetch, env, now }));
+  assert.equal(slower.statusCode, 503);
+  assert.match(slower.body, /Try again in a minute/);
+
+  const retryAfter = fakeGitHub({ fail: () => [403, { message: 'Forbidden' }, { 'retry-after': '60' }] });
+  const { result: later } = await quietly(() => handle(linkArgs(subtitle, 'POST'), { fetch: retryAfter.fetch, env, now }));
+  assert.equal(later.statusCode, 503);
+
   const down = async () => { throw new Error('ECONNRESET with token github_pat_SECRETTOKEN'); };
   const { result: offline, logged } = await quietly(() => handle(linkArgs(subtitle, 'POST'), { fetch: down, env, now }));
   assert.equal(offline.statusCode, 502);
@@ -388,4 +433,50 @@ test('a GitHub error message with markup is escaped', async () => {
   const { result } = await quietly(() => handle(linkArgs(subtitle, 'POST'), { fetch: github.fetch, env, now }));
   assert.match(result.body, /&lt;script&gt;x&lt;\/script&gt;/);
   assert.doesNotMatch(result.body, /<script>/);
+});
+
+test('a used link whose PR was closed and its branch deleted is still found (by its id), never reopened', async () => {
+  const github = fakeGitHub();
+  await handle(linkArgs(subtitle, 'POST'), { fetch: github.fetch, env, now });
+  github.close(40, { deleteBranch: true });
+
+  const page = await handle(linkArgs(subtitle), { fetch: github.fetch, env, now });
+  assert.match(page.body, /<h1>Already published \(closed\)<\/h1>/);
+
+  const again = await handle(linkArgs(subtitle, 'POST'), { fetch: github.fetch, env, now });
+  assert.equal(again.statusCode, 303);
+  assert.match(again.body, /<h1>Already published \(closed\)<\/h1>/);
+  assert.equal(github.state.pulls.length, 1);
+  assert.ok(!github.state.refs.has(branchName(subtitle)));
+});
+
+test('a merged PR reads as merged', async () => {
+  const github = fakeGitHub();
+  await handle(linkArgs(star, 'POST'), { fetch: github.fetch, env, now });
+  github.close(40, { merged: true, deleteBranch: true });
+  const page = await handle(linkArgs(star), { fetch: github.fetch, env, now });
+  assert.match(page.body, /<h1>Already published \(merged\)<\/h1>/);
+});
+
+test('search only counts a PR whose body has the exact id line', async () => {
+  const github = fakeGitHub();
+  // Another PR that merely mentions the id in passing.
+  github.state.pulls.push({ number: 7, html_url: `https://github.com/${REPO}/pull/7`, state: 'closed', merged_at: null, head: 'other', body: `see ${subtitle.id}` });
+  const page = await handle(linkArgs(subtitle), { fetch: github.fetch, env, now });
+  assert.match(page.body, /Open the pull request/);
+});
+
+test('a GitHub call that hangs times out with a friendly page', async () => {
+  const github = fakeGitHub({ hang: (method, path) => path === '/git/refs' });
+  const { result } = await quietly(() => handle(linkArgs(subtitle, 'POST'), { fetch: github.fetch, env, now, callTimeoutMs: 20 }));
+  assert.equal(result.statusCode, 504);
+  assert.match(result.body, /GitHub didn&#39;t answer in time \(creating the branch\)/);
+});
+
+test('the whole run has a budget, so it ends before DigitalOcean\'s timeout', async () => {
+  const slow = fakeGitHub();
+  const fetch = (url, init) => new Promise(resolve => setTimeout(() => resolve(slow.fetch(url, init)), 15));
+  const { result } = await quietly(() => handle(linkArgs(subtitle, 'POST'), { fetch, env, now, budgetMs: 40 }));
+  assert.equal(result.statusCode, 504);
+  assert.ok(slow.calls.length < 5);
 });

@@ -13,7 +13,6 @@ const ANSWER_MARKER = '<!-- Write your answer below this line, then merge. Leave
 // Visitor PRs say where they came from; no @-mentions, so nobody is pinged.
 const PR_FOOTER = '<sub>Opened by `ask/publish` (morganvanv.com-backend) from a signed link in Morgan\'s Discord.</sub>';
 
-const MAX_TITLE_QUOTE = 60;
 
 function month(iat) {
   return new Date(iat * 1000).toISOString().slice(0, 7);
@@ -47,15 +46,13 @@ function fileContent(item) {
   return `---\nasked: ${day(iat)}\n---\n${quoted}\n\n${ANSWER_MARKER}\n`;
 }
 
-/** Shortened to `max` characters (not splitting a surrogate pair), with an ellipsis when cut. */
-function shorten(text, max) {
-  const chars = Array.from(text);
-  return chars.length <= max ? text : chars.slice(0, max - 1).join('').trimEnd() + '…';
-}
-
+/**
+ * The PR title: kind and id only. The site squash-merges with the PR title as the commit title, so
+ * visitor text here would land on master, where "fixes #12" closes an issue and "owner/repo#3"
+ * cross-references from Morgan's account. The id's slug is only [a-z0-9-].
+ */
 function prTitle(item) {
-  const quote = item.kind === 'star' ? item.fields.name : item.fields.text.replace(/\s+/g, ' ');
-  return `visitor: ${item.kind} "${shorten(quote, MAX_TITLE_QUOTE)}"`;
+  return `visitor: ${item.kind} ${item.id}`;
 }
 
 /** A Markdown code span or fenced block that visitor text can't close early (and where @-mentions do nothing). */
@@ -106,11 +103,15 @@ function prBody(item, repo) {
   }
 
   lines.push(
-    '**Merge to publish it. Close to reject it.** Nothing goes live until this is merged.',
+    '**Merge to publish it. Close to reject it.** Nothing goes live until this is merged. '
+      + 'This PR and its text stay public on GitHub either way.',
     '',
     `New file: \`${path}\``,
     '',
     codeBlock(fileContent(item), item.kind === 'question' ? 'markdown' : 'json'),
+    '',
+    // ask/publish searches for this line to find the PR again, even closed with its branch deleted.
+    idLine(item),
     '',
     '---',
     PR_FOOTER,
@@ -118,8 +119,14 @@ function prBody(item, repo) {
   return lines.join('\n') + '\n';
 }
 
+/** The line in every visitor PR body that names its item (ids are [a-z0-9-], so it's safe to search for). */
+function idLine(item) {
+  return `Visitor item: \`${item.id}\``;
+}
+
+/** Kind and id only, like the title. */
 function commitMessage(item) {
   return `visitor: add ${item.kind} ${item.id}`;
 }
 
-module.exports = { ANSWER_MARKER, branchName, filePath, fileContent, prTitle, prBody, commitMessage, codeSpan, codeBlock };
+module.exports = { ANSWER_MARKER, branchName, filePath, fileContent, prTitle, prBody, idLine, commitMessage, codeSpan, codeBlock };

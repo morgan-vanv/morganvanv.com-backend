@@ -1,9 +1,11 @@
-const fetch = require('node-fetch');
+// The runtime is pinned to nodejs:24 in project.yml, so fetch is built in: no dependencies.
 const { problem, discordPayload, publishConfig } = require('./embed');
+const { methodOf } = require('./publish-link');
 
 async function main(args) {
     // 1. CORS Preflight Handling for GitHub Pages
-    if (args.__ow_method === "options") {
+    const method = methodOf(args);
+    if (method === "options") {
         return {
             statusCode: 204
         };
@@ -11,7 +13,8 @@ async function main(args) {
 
     // Only the site's POST is a submission. Web actions also take GET query parameters, so without
     // this a plain link or <img src="…?question=…"> on any page would post to Discord from its visitors.
-    if (args.__ow_method && args.__ow_method !== "post") {
+    // A request whose method the platform didn't report is refused too.
+    if (method !== "post") {
         return {
             statusCode: 405,
             headers: { 'Allow': 'POST, OPTIONS', 'Content-Type': 'application/json' },

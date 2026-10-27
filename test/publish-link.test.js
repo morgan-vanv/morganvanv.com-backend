@@ -5,13 +5,13 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const {
-  makeItem, readLink, publishLink, encodeItem, sign, slugify, cleanFields, block, isValidItem, usableSecret, MAX_LINK_LENGTH,
+  makeItem, readLink, publishLink, encodeItem, sign, slugify, cleanFields, oneLine, block, isValidItem, usableSecret, methodOf, MAX_LINK_LENGTH,
 } = require('../packages/ask/submit/publish-link');
 
 const SECRET = 'a'.repeat(64);
 const PUBLISH_URL = 'https://faas-nyc1-x.doserverless.co/api/v1/web/fn-x/ask/publish';
 const now = new Date('2026-10-27T05:00:00Z');
-const hex = () => '3f2a';
+const hex = () => '3f2a9c1b';
 
 const subtitle = { kind: 'subtitle', question: '✨ …', subtitle: 'a certified night owl', credit: 'sam' };
 const star = { kind: 'star', question: '⭐ …', name: 'Gerald', credit: null, star: { ra: 283.626, dec: 36.899, mag: 4.3, near: 'Vega' } };
@@ -29,13 +29,13 @@ test('the two copies of publish-link.js are the same file (edit one, copy it ove
 
 test('an item per publishable kind, built from the cleaned fields', () => {
   assert.deepEqual(makeItem(subtitle, now, hex), {
-    kind: 'subtitle', id: '2026-10-27-a-certified-night-owl-3f2a', iat: 1793077200, fields: { text: 'a certified night owl', by: 'sam' },
+    kind: 'subtitle', id: '2026-10-27-a-certified-night-owl-3f2a9c1b', iat: 1793077200, fields: { text: 'a certified night owl', by: 'sam' },
   });
   assert.deepEqual(makeItem(star, now, hex), {
-    kind: 'star', id: '2026-10-27-gerald-3f2a', iat: 1793077200, fields: { ra: 283.626, dec: 36.899, name: 'Gerald', by: null, near: 'Vega' },
+    kind: 'star', id: '2026-10-27-gerald-3f2a9c1b', iat: 1793077200, fields: { ra: 283.626, dec: 36.899, name: 'Gerald', by: null, near: 'Vega' },
   });
   assert.deepEqual(makeItem(question, now, hex), {
-    kind: 'question', id: '2026-10-27-why-the-cat-3f2a', iat: 1793077200, fields: { text: 'why the cat?' },
+    kind: 'question', id: '2026-10-27-why-the-cat-3f2a9c1b', iat: 1793077200, fields: { text: 'why the cat?' },
   });
 });
 
@@ -110,15 +110,15 @@ test('a signed payload that isn\'t a valid item is still refused', () => {
     return readLink(p, sign(p, SECRET), SECRET, now).reason;
   };
   const t = 1793077200;
-  assert.equal(sneaky({ k: 'message', id: '2026-10-27-hi-3f2a', t, f: { text: 'hi' } }), 'malformed');
-  assert.equal(sneaky({ k: 'subtitle', id: '2026-10-27-hi-3f2a', t, f: { text: 'x'.repeat(61), by: null } }), 'malformed');
-  assert.equal(sneaky({ k: 'subtitle', id: '2026-10-27-hi-3f2a', t, f: { text: ' hi', by: null } }), 'malformed');
-  assert.equal(sneaky({ k: 'subtitle', id: '2026-10-27-hi-3f2a', t, f: { text: 'hi', by: null, extra: 1 } }), 'malformed');
-  assert.equal(sneaky({ k: 'subtitle', id: '../../etc-3f2a', t, f: { text: 'hi', by: null } }), 'malformed');
-  assert.equal(sneaky({ k: 'subtitle', id: '2026-10-28-hi-3f2a', t, f: { text: 'hi', by: null } }), 'malformed');
-  assert.equal(sneaky({ k: 'subtitle', id: '2026-10-27-hi-3f2a', t: '1793077200', f: { text: 'hi', by: null } }), 'malformed');
+  assert.equal(sneaky({ k: 'message', id: '2026-10-27-hi-3f2a9c1b', t, f: { text: 'hi' } }), 'malformed');
+  assert.equal(sneaky({ k: 'subtitle', id: '2026-10-27-hi-3f2a9c1b', t, f: { text: 'x'.repeat(61), by: null } }), 'malformed');
+  assert.equal(sneaky({ k: 'subtitle', id: '2026-10-27-hi-3f2a9c1b', t, f: { text: ' hi', by: null } }), 'malformed');
+  assert.equal(sneaky({ k: 'subtitle', id: '2026-10-27-hi-3f2a9c1b', t, f: { text: 'hi', by: null, extra: 1 } }), 'malformed');
+  assert.equal(sneaky({ k: 'subtitle', id: '../../etc-3f2a9c1b', t, f: { text: 'hi', by: null } }), 'malformed');
+  assert.equal(sneaky({ k: 'subtitle', id: '2026-10-28-hi-3f2a9c1b', t, f: { text: 'hi', by: null } }), 'malformed');
+  assert.equal(sneaky({ k: 'subtitle', id: '2026-10-27-hi-3f2a9c1b', t: '1793077200', f: { text: 'hi', by: null } }), 'malformed');
   assert.equal(sneaky([1, 2]), 'malformed');
-  assert.equal(sneaky({ k: 'subtitle', id: '2026-10-27-hi-3f2a', t, f: { text: 'hi', by: null } }), undefined);
+  assert.equal(sneaky({ k: 'subtitle', id: '2026-10-27-hi-3f2a9c1b', t, f: { text: 'hi', by: null } }), undefined);
   const notJson = Buffer.from('{nope').toString('base64url');
   assert.equal(readLink(notJson, sign(notJson, SECRET), SECRET, now).reason, 'malformed');
 });
@@ -174,4 +174,49 @@ test('isValidItem accepts exactly what makeItem makes', () => {
   for (const args of [subtitle, star, question]) assert.equal(isValidItem(makeItem(args, now, hex)), true);
   assert.equal(isValidItem(null), false);
   assert.equal(isValidItem({ ...makeItem(star, now, hex), kind: 'subtitle' }), false);
+});
+
+test('cleaning twice changes nothing, so a link always matches its item when publish cleans it again', () => {
+  assert.equal(oneLine('a \u0007 b'), 'a b');
+  assert.equal(block('a \u0007 b\n\u0007\n\n\nc'), 'a b\n\nc');
+  const pieces = ['a', ' ', '\t', '\n', '\r\n', '\u0007', '\u0000', '​', '‮', ' ', ' ', '\u0085', 'é', '<!', '`'];
+  let seed = 7;
+  const next = () => (seed = (seed * 48271) % 2147483647);
+  for (let i = 0; i < 2000; i++) {
+    let text = '';
+    for (let j = next() % 12; j > 0; j--) text += pieces[next() % pieces.length];
+    assert.equal(oneLine(oneLine(text)), oneLine(text), JSON.stringify(text));
+    assert.equal(block(block(text)), block(text), JSON.stringify(text));
+    for (const args of [{ kind: 'subtitle', subtitle: `x${text}`, credit: text || null }, { kind: 'question', text: `x${text}` }, { kind: 'star', name: `x${text}`, star: { ra: 1, dec: 1, near: text } }]) {
+      const item = makeItem(args, now, hex);
+      if (item) assert.equal(isValidItem(item), true, JSON.stringify(args));
+    }
+  }
+});
+
+test('makeItem never returns an item that publish would refuse', () => {
+  assert.equal(makeItem(subtitle, now, () => 'xyz'), null);
+  assert.equal(makeItem(subtitle, now, () => '3f2a'), null);
+  assert.equal(makeItem(subtitle, new Date(NaN), hex), null);
+});
+
+test('ids end in 8 random hex characters', () => {
+  assert.match(makeItem(star).id, /^\d{4}-\d{2}-\d{2}-gerald-[0-9a-f]{8}$/);
+});
+
+test('the signature covers a version prefix, so a bare HMAC of p is not a signature', () => {
+  const { p } = parts(publishLink(makeItem(subtitle, now, hex), PUBLISH_URL, SECRET));
+  const bare = crypto.createHmac('sha256', SECRET).update(p).digest('base64url');
+  assert.equal(readLink(p, bare, SECRET, now).reason, 'signature');
+  assert.equal(sign(p, SECRET), crypto.createHmac('sha256', SECRET).update(`publish-link/v1\n${p}`).digest('base64url'));
+});
+
+test('methodOf reads http.method only from an object, else __ow_method, lowercased', () => {
+  assert.equal(methodOf({ http: { method: 'POST' } }), 'post');
+  assert.equal(methodOf({ __ow_method: 'get' }), 'get');
+  assert.equal(methodOf({ http: 'POST', __ow_method: 'get' }), 'get');
+  assert.equal(methodOf({ http: ['POST'] }), '');
+  assert.equal(methodOf({ http: { method: 7 } }), '');
+  assert.equal(methodOf({}), '');
+  assert.equal(methodOf(undefined), '');
 });

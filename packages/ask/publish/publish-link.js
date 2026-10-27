@@ -4,8 +4,8 @@
 // deploys each function folder on its own, so this file lives in both folders; a test fails if the
 // two copies ever differ (edit one, copy it over the other).
 //
-// A link carries the item itself: `p` is base64url JSON, `s` an HMAC-SHA256 of `p` keyed by
-// PUBLISH_SECRET. The item is built from the submission's structured fields, cleaned and held to
+// A link carries the item itself: `p` is base64url JSON, `s` an HMAC-SHA256 of `publish-link/v1\n` + `p`
+// keyed by PUBLISH_SECRET. The item is built from the submission's structured fields, cleaned and held to
 // the form's own limits, never from the free-text message: it becomes a file in the site's repo.
 
 const crypto = require('crypto');
@@ -30,12 +30,27 @@ const MAX_TOKEN_LENGTH = 4096;
 const MAX_INFLATED_BYTES = 16 * 1024;
 const MIN_SECRET_LENGTH = 32;
 
-const ID_PATTERN = /^(\d{4}-\d{2}-\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-[0-9a-f]{4}$/;
+const ID_PATTERN = /^(\d{4}-\d{2}-\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-[0-9a-f]{8}$/;
+const SIGNATURE_CONTEXT = 'publish-link/v1\n';
 
-/** One line of visitor text: no invisible or control characters, whitespace collapsed (as the site's oneLine). */
+/**
+ * The request's HTTP method, lowercased, or '' when the platform didn't say. DigitalOcean puts it
+ * in `http.method`; older OpenWhisk-style runtimes in `__ow_method`.
+ */
+function methodOf(args) {
+  const http = args && typeof args.http === 'object' && args.http !== null && !Array.isArray(args.http) ? args.http : null;
+  const method = http ? http.method : args && args.__ow_method;
+  return typeof method === 'string' ? method.toLowerCase() : '';
+}
+
+/**
+ * One line of visitor text: no invisible or control characters, whitespace collapsed. Control
+ * characters go before whitespace is collapsed, so cleaning twice changes nothing (a link must
+ * still match its item when publish cleans it again).
+ */
 function oneLine(value) {
   if (typeof value !== 'string') return '';
-  return value.replace(/[\p{Cf}]/gu, '').replace(/\s+/g, ' ').replace(/\p{Cc}/gu, '').trim();
+  return value.replace(/[\p{Cf}]/gu, '').replace(/[^\P{Cc}\s]/gu, '').replace(/\s+/g, ' ').trim();
 }
 
 /** Several lines of visitor text: as oneLine, but line breaks kept (at most one blank line in a row). */
@@ -44,8 +59,8 @@ function block(value) {
   return value
     .replace(/\r\n?/g, '\n')
     .replace(/[\p{Cf}]/gu, '')
+    .replace(/[^\P{Cc}\s]/gu, '')
     .replace(/[^\S\n]+/g, ' ')
-    .replace(/[^\P{Cc}\n]/gu, '')
     .split('\n')
     .map(line => line.trim())
     .join('\n')
@@ -73,7 +88,8 @@ function cleanFields(kind, args) {
 
   if (kind === 'question') {
     const text = block(args.text);
-    if (!text || text.length > MAX_QUESTION) return null;
+    // `<!--` could pose as the answer marker or hide text on the site, so such questions are added by hand.
+    if (!text || text.length > MAX_QUESTION || text.includes('<!--')) return null;
     return { text };
   }
 
@@ -126,22 +142,25 @@ function isoDay(seconds) {
   return new Date(seconds * 1000).toISOString().slice(0, 10);
 }
 
-/** `YYYY-MM-DD-<slug>-<4 hex>`, dated (UTC) when the item was issued. */
-function makeId(kind, fields, iat, hex4) {
-  return `${isoDay(iat)}-${slugify(kind === 'star' ? fields.name : fields.text, kind)}-${hex4}`;
+/** `YYYY-MM-DD-<slug>-<8 hex>`, dated (UTC) when the item was issued. */
+function makeId(kind, fields, iat, hex8) {
+  return `${isoDay(iat)}-${slugify(kind === 'star' ? fields.name : fields.text, kind)}-${hex8}`;
 }
 
 /**
  * The publishable item for a submission, or null: always null for the anonymous dropbox
  * (`message`) and for anything whose fields don't fit the form.
  */
-function makeItem(args, now = new Date(), randomHex = () => crypto.randomBytes(2).toString('hex')) {
+function makeItem(args, now = new Date(), randomHex = () => crypto.randomBytes(4).toString('hex')) {
   const kind = args && args.kind;
   if (!PUBLISHABLE_KINDS.includes(kind)) return null;
   const fields = cleanFields(kind, args);
   if (!fields) return null;
   const iat = Math.floor(now.getTime() / 1000);
-  return { kind, id: makeId(kind, fields, iat, randomHex()), iat, fields };
+  if (!Number.isSafeInteger(iat) || iat <= 0) return null;
+  const item = { kind, id: makeId(kind, fields, iat, randomHex()), iat, fields };
+  // Never hand out a link that publish would refuse.
+  return isValidItem(item) ? item : null;
 }
 
 /** The submission-shaped args that `fields` came from, so they can be cleaned again and compared. */
@@ -179,7 +198,7 @@ function encodeItem(item, compress = false) {
 }
 
 function sign(p, secret) {
-  return base64url(crypto.createHmac('sha256', secret).update(p).digest());
+  return base64url(crypto.createHmac('sha256', secret).update(SIGNATURE_CONTEXT + p).digest());
 }
 
 function signatureMatches(p, s, secret) {
@@ -244,6 +263,7 @@ function expiresAt(iat) {
 
 module.exports = {
   PUBLISHABLE_KINDS,
+  methodOf,
   MAX_QUESTION,
   MAX_LINK_LENGTH,
   LINK_TTL_SECONDS,

@@ -4,27 +4,55 @@
 //
 // The token only ever goes in the Authorization header. Nothing here logs it or the visitor's text.
 
-const { branchName, filePath, fileContent, prTitle, prBody, commitMessage } = require('./entry');
+const { branchName, filePath, fileContent, prTitle, prBody, idLine, commitMessage } = require('./entry');
 
 const API = 'https://api.github.com';
 const BASE_BRANCH = 'master';
 const LABEL = { name: 'visitor', color: 'c9922a', description: 'Suggested by a visitor to the site' };
 
+// Each call gets 8 s, and the whole run 25 s, so a hung GitHub shows our page, not DigitalOcean's
+// timeout (the function's limit is 30 s).
+const CALL_TIMEOUT_MS = 8000;
+const RUN_BUDGET_MS = 25000;
+
 class GitHubError extends Error {
-  constructor(step, status, detail) {
+  constructor(step, status, detail, { rateLimited = false, timedOut = false } = {}) {
     super(`GitHub ${step} failed (${status})`);
     this.step = step;
     this.status = status;
     // GitHub's own one-line message, if any (never the token, never the visitor's text).
     this.detail = typeof detail === 'string' ? detail.slice(0, 200) : '';
+    this.rateLimited = rateLimited;
+    this.timedOut = timedOut;
   }
 }
 
-function client({ fetch, token, repo }) {
+function header(response, name) {
+  return response.headers && typeof response.headers.get === 'function' ? response.headers.get(name) : null;
+}
+
+/** Primary (x-ratelimit-remaining: 0) and secondary (retry-after, or GitHub saying so) rate limits. */
+function isRateLimited(response, data) {
+  if (response.status === 429) return true;
+  if (response.status !== 403) return false;
+  const message = data && typeof data.message === 'string' ? data.message : '';
+  return header(response, 'x-ratelimit-remaining') === '0'
+    || header(response, 'retry-after') !== null
+    || /rate limit/i.test(message);
+}
+
+function client({ fetch, token, repo, callTimeoutMs = CALL_TIMEOUT_MS, budgetMs = RUN_BUDGET_MS }) {
+  const deadline = Date.now() + budgetMs;
+
   async function call(step, method, path, body) {
+    const timeLeft = Math.min(callTimeoutMs, deadline - Date.now());
+    if (timeLeft <= 0) throw new GitHubError(step, 0, 'GitHub took too long.', { timedOut: true });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeLeft);
     let response;
+    let data = null;
     try {
-      response = await fetch(`${API}/repos/${repo}${path}`, {
+      response = await fetch(path.startsWith('/search/') ? `${API}${path}` : `${API}/repos/${repo}${path}`, {
         method,
         headers: {
           Authorization: `Bearer ${token}`,
@@ -34,34 +62,35 @@ function client({ fetch, token, repo }) {
           ...(body ? { 'Content-Type': 'application/json' } : {}),
         },
         body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
       });
+      try {
+        data = await response.json();
+      } catch (error) {
+        if (controller.signal.aborted) throw error;
+        // Some responses have no body.
+      }
     } catch {
+      if (controller.signal.aborted) throw new GitHubError(step, 0, 'GitHub took too long.', { timedOut: true });
       throw new GitHubError(step, 0, 'GitHub could not be reached.');
+    } finally {
+      clearTimeout(timer);
     }
-    let data = null;
-    try {
-      data = await response.json();
-    } catch {
-      // Some responses have no body.
-    }
-    const rateLimited = response.status === 429
-      || (response.status === 403 && response.headers && typeof response.headers.get === 'function'
-        && response.headers.get('x-ratelimit-remaining') === '0');
-    return { status: response.status, data, rateLimited };
+    return { status: response.status, data, rateLimited: isRateLimited(response, data) };
+  }
+
+  function fail(step, result) {
+    return new GitHubError(step, result.status, result.data && result.data.message, { rateLimited: result.rateLimited });
   }
 
   /** `call`, throwing a GitHubError unless the status is one of `ok`. */
   async function expect(step, ok, method, path, body) {
     const result = await call(step, method, path, body);
-    if (!ok.includes(result.status)) {
-      const error = new GitHubError(step, result.status, result.data && result.data.message);
-      error.rateLimited = result.rateLimited;
-      throw error;
-    }
+    if (!ok.includes(result.status)) throw fail(step, result);
     return result;
   }
 
-  return { call, expect };
+  return { call, expect, fail };
 }
 
 function owner(repo) {
@@ -69,14 +98,26 @@ function owner(repo) {
 }
 
 function prSummary(pr) {
-  return { number: pr.number, url: pr.html_url, state: pr.merged_at ? 'merged' : pr.state };
+  const merged = pr.merged_at || (pr.pull_request && pr.pull_request.merged_at);
+  return { number: pr.number, url: pr.html_url, state: merged ? 'merged' : pr.state };
 }
 
-/** The PR already opened for this item (open, closed or merged), or null. */
+/**
+ * The PR already opened for this item (open, closed or merged), or null. First by its branch,
+ * which GitHub knows at once (a double click); then by the id line in its body, which still finds
+ * a PR that was closed and had its branch deleted, so a rejected item never comes back.
+ */
 async function findPr(gh, repo, item) {
   const head = encodeURIComponent(`${owner(repo)}:${branchName(item)}`);
-  const { data } = await gh.expect('looking for an existing PR', [200], 'GET', `/pulls?head=${head}&state=all&per_page=1`);
-  return Array.isArray(data) && data[0] ? prSummary(data[0]) : null;
+  const byBranch = await gh.expect('looking for an existing PR', [200], 'GET', `/pulls?head=${head}&state=all&per_page=1`);
+  if (Array.isArray(byBranch.data) && byBranch.data[0]) return prSummary(byBranch.data[0]);
+
+  const query = encodeURIComponent(`repo:${repo} is:pr in:body "${item.id}"`);
+  const search = await gh.expect('searching for an existing PR', [200], 'GET', `/search/issues?q=${query}&per_page=10`);
+  const items = search.data && Array.isArray(search.data.items) ? search.data.items : [];
+  // Search matches loosely; only a PR whose body has this exact id line counts.
+  const found = items.find(pr => pr.pull_request && typeof pr.body === 'string' && pr.body.includes(idLine(item)));
+  return found ? prSummary(found) : null;
 }
 
 async function ensureBranch(gh, item) {
@@ -104,9 +145,7 @@ async function ensureFile(gh, item) {
     const again = await gh.call('checking the file', 'GET', `/contents/${path}?ref=${ref}`);
     if (again.status === 200) return;
   }
-  const error = new GitHubError('adding the file', put.status, put.data && put.data.message);
-  error.rateLimited = put.rateLimited;
-  throw error;
+  throw gh.fail('adding the file', put);
 }
 
 /** Labels the PR `visitor`, creating the label the first time. Never fails the publish. */
@@ -125,8 +164,9 @@ async function labelPr(gh, number) {
  * Opens (or finds) the PR for `item`. Returns { pr: { number, url, state }, existed }.
  * Throws a GitHubError when GitHub refuses a step.
  */
-async function publish({ fetch, token, repo }, item) {
-  const gh = client({ fetch, token, repo });
+async function publish(options, item) {
+  const gh = client(options);
+  const { repo } = options;
   const found = await findPr(gh, repo, item);
   if (found) return { pr: found, existed: true };
 
@@ -149,14 +189,12 @@ async function publish({ fetch, token, repo }, item) {
     const raced = await findPr(gh, repo, item);
     if (raced) return { pr: raced, existed: true };
   }
-  const error = new GitHubError('opening the PR', opened.status, opened.data && opened.data.message);
-  error.rateLimited = opened.rateLimited;
-  throw error;
+  throw gh.fail('opening the PR', opened);
 }
 
 /** Looks for an existing PR only (for the confirm page). */
-async function existingPr({ fetch, token, repo }, item) {
-  return findPr(client({ fetch, token, repo }), repo, item);
+async function existingPr(options, item) {
+  return findPr(client(options), options.repo, item);
 }
 
-module.exports = { publish, existingPr, GitHubError, BASE_BRANCH, LABEL };
+module.exports = { publish, existingPr, GitHubError, BASE_BRANCH, LABEL, CALL_TIMEOUT_MS };

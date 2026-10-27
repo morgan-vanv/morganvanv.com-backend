@@ -60,16 +60,79 @@ function publishConfig(env) {
 }
 
 /**
- * The "Publish" field for a question, subtitle or star name when publishing is set up, or null.
- * The anonymous dropbox never gets one.
+ * True when the message shown in Discord says what the structured fields say, built the way the
+ * site's form builds it (contact-submission.ts, sky-naming.ts). The link publishes the fields, so
+ * someone who skips the form must not get a link for text that differs from the message above it.
  */
-function publishField(args, now, publish, randomHex) {
-  if (!publish || !PUBLISHABLE_KINDS.includes(args.kind)) return null;
+function matchesMessage(args) {
+  if (typeof args.question !== 'string') return false;
+  const message = args.question.trim();
+  const lines = message.split('\n');
+  const rest = lines.slice(3).every(line => line.startsWith('approve: '));
+  const credit = args.credit === null || args.credit === undefined ? 'anonymous' : args.credit;
+
+  if (args.kind === 'question') {
+    return typeof args.text === 'string' && message === `${KINDS.question.title}\n${args.text}`.trim();
+  }
+  if (args.kind === 'subtitle') {
+    return typeof args.subtitle === 'string' && rest
+      && lines[0] === KINDS.subtitle.title
+      && lines[1] === `"${args.subtitle}"`
+      && lines[2] === `credit: ${credit}`;
+  }
+  if (args.kind === 'star') {
+    const star = args.star && typeof args.star === 'object' ? args.star : {};
+    if (typeof args.name !== 'string' || typeof star.mag !== 'number' || !Number.isFinite(star.mag)) return false;
+    const where = star.near ? `unnamed star near ${star.near}` : 'unnamed star';
+    return rest
+      && lines[0] === KINDS.star.title
+      && lines[1] === `${JSON.stringify(args.name)} for the ${where} (magnitude ${star.mag.toFixed(1)})`
+      && lines[2] === `named by: ${credit}`;
+  }
+  return false;
+}
+
+/** Discord Markdown escaped, so text shows exactly as typed outside a code block. */
+function discordEscape(text) {
+  return text.replace(/[\\`*_~|<>#\-[\]()]/g, '\\$&');
+}
+
+/** What the link would publish, exactly: in a code block, or escaped when a backtick could break one. */
+function publishPreview(item) {
+  const { fields } = item;
+  let text;
+  if (item.kind === 'question') text = fields.text;
+  else if (item.kind === 'subtitle') text = `text: ${JSON.stringify(fields.text)}\nby: ${JSON.stringify(fields.by)}`;
+  else {
+    text = `name: ${JSON.stringify(fields.name)}\nby: ${JSON.stringify(fields.by)}\nra: ${fields.ra}, dec: ${fields.dec}`;
+    if (fields.near) text += `\nnear: ${JSON.stringify(fields.near)}`;
+  }
+  return text.includes('`') ? discordEscape(text) : '```\n' + text + '\n```';
+}
+
+const NO_LINK = {
+  mismatch: 'No publish link: the message above doesn\'t match the fields that would be published.',
+  comment: 'No publish link: the question contains `<!--`. Add it to the site by hand.',
+  invalid: 'No publish link: this doesn\'t fit the form\'s limits.',
+  tooLong: 'No publish link: too long to fit in one. Add it to the site by hand.',
+};
+
+/**
+ * The fields for a question, subtitle or star name when publishing is set up: "Will publish" (the
+ * exact text) and "Publish" (the link), or one "Publish" field saying why there's no link.
+ * Nothing for the anonymous dropbox, or when publishing is off.
+ */
+function publishFields(args, now, publish, randomHex) {
+  if (!publish || !PUBLISHABLE_KINDS.includes(args.kind)) return [];
+  const why = reason => [{ name: 'Publish', value: NO_LINK[reason] }];
+  if (!matchesMessage(args)) return why('mismatch');
+  if (args.kind === 'question' && typeof args.text === 'string' && args.text.includes('<!--')) return why('comment');
   const item = makeItem(args, now, randomHex);
-  if (!item) return { name: 'Publish', value: 'No publish link: this doesn\'t match what the form sends.' };
+  if (!item) return why('invalid');
   const url = publishLink(item, publish.url, publish.secret);
-  if (!url) return { name: 'Publish', value: 'No publish link: too long to fit in one. Add it to the site by hand.' };
-  return { name: 'Publish', value: `[Publish as PR](${url})` };
+  const preview = publishPreview(item);
+  if (!url || preview.length > 1024) return why('tooLong');
+  return [{ name: 'Will publish', value: preview }, { name: 'Publish', value: `[Publish as PR](${url})` }];
 }
 
 /**
@@ -86,15 +149,16 @@ function discordPayload(args, now = new Date(), publish = null, randomHex = unde
   if (kind && lines[0]?.trim() === kind.title) lines.shift();
 
   const fields = [];
-  const publishing = publishField(args, now, publish, randomHex);
+  const publishing = publishFields(args, now, publish, randomHex);
+  const linked = publishing.some(field => field.value.startsWith('[Publish as PR]'));
   const entry = approveEntry(args, now);
   // The entry to paste is the fallback: it goes when there's a link to press instead.
-  if (entry && !(publishing && publishing.value.startsWith('[Publish as PR]'))) {
+  if (entry && !linked) {
     // A backtick in a visitor's text could close the code block early, so such entries go in as plain text.
     const value = entry.includes('`') ? entry : '```\n' + entry + '\n```';
     fields.push({ name: 'To approve, paste this', value: value.slice(0, 1024) });
   }
-  if (publishing) fields.push(publishing);
+  fields.push(...publishing);
 
   const { title, color } = kind ?? LEGACY;
   const embed = { title, description: lines.join('\n').trim() || '(empty)', color, timestamp: now.toISOString() };
@@ -103,4 +167,4 @@ function discordPayload(args, now = new Date(), publish = null, randomHex = unde
   return { embeds: [embed], allowed_mentions: { parse: [] } };
 }
 
-module.exports = { problem, discordPayload, approveEntry, publishConfig, MAX_QUESTION_LENGTH };
+module.exports = { problem, discordPayload, approveEntry, publishConfig, matchesMessage, discordEscape, MAX_QUESTION_LENGTH };
