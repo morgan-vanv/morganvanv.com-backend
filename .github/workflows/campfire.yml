@@ -1,10 +1,10 @@
 # The campfire (campfire/): test on every PR that touches it; deploy to Cloudflare from main.
 #
-# Actions are pinned to full commit SHAs (the deploy step receives an account-wide Cloudflare token);
+# Actions are pinned to full commit SHAs (the deploy step receives a Cloudflare token);
 # Dependabot (.github/dependabot.yml) proposes updates weekly.
 #
-# Deploying needs two repository secrets, CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (see
-# campfire/README.md, "Setting it up"). Until both exist the deploy is skipped with a notice, so the
+# Deploying needs two secrets in the production environment, CLOUDFLARE_API_TOKEN and
+# CLOUDFLARE_ACCOUNT_ID (see campfire/README.md, "Setting it up"). Until both exist the deploy is skipped with a notice, so the
 # workflow stays green. CAMPFIRE_HOST_KEY is optional: when set it becomes the Worker's secret of the same
 # name and turns on host posting and deleting.
 name: Campfire
