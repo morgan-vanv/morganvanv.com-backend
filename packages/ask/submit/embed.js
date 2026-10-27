@@ -158,7 +158,10 @@ function discordPayload(args, now = new Date(), publish = null, randomHex = unde
   const fields = entryFields(args, now, publish, randomHex);
 
   const { title, color } = kind ?? LEGACY;
-  const embed = { title, description: lines.join('\n').trim() || '(empty)', color, timestamp: now.toISOString() };
+  // Square brackets escaped, so a visitor can't write a masked link ([Publish as PR](https://…)) that
+  // passes for the real one in the fields below. The text reads the same.
+  const description = lines.join('\n').trim().replace(/[[\]]/g, '\\$&') || '(empty)';
+  const embed = { title, description, color, timestamp: now.toISOString() };
   if (fields.length) embed.fields = fields;
   // Visitors' text never pings anyone, whatever it says.
   return { embeds: [embed], allowed_mentions: { parse: [] } };

@@ -211,12 +211,24 @@ test('the signature covers a version prefix, so a bare HMAC of p is not a signat
   assert.equal(sign(p, SECRET), crypto.createHmac('sha256', SECRET).update(`publish-link/v1\n${p}`).digest('base64url'));
 });
 
-test('methodOf reads http.method only from an object, else __ow_method, lowercased', () => {
+test('methodOf reads http.method when http is sent, else __ow_method, lowercased', () => {
   assert.equal(methodOf({ http: { method: 'POST' } }), 'post');
   assert.equal(methodOf({ __ow_method: 'get' }), 'get');
-  assert.equal(methodOf({ http: 'POST', __ow_method: 'get' }), 'get');
+  // A non-object `http` (say, a query parameter) says nothing, and never falls back to __ow_method.
+  assert.equal(methodOf({ http: 'POST', __ow_method: 'get' }), '');
+  assert.equal(methodOf({ http: '1', __ow_method: 'post' }), '');
   assert.equal(methodOf({ http: ['POST'] }), '');
   assert.equal(methodOf({ http: { method: 7 } }), '');
   assert.equal(methodOf({}), '');
   assert.equal(methodOf(undefined), '');
+});
+
+test('the secret is trimmed, so a stray space or CR in .env still signs the same', () => {
+  const secret = 'x'.repeat(40);
+  assert.equal(usableSecret(` ${secret}\r\n`), secret);
+  assert.equal(usableSecret(' '.repeat(10) + 'x'.repeat(31)), null);
+});
+
+test('a lone surrogate is made well-formed before it reaches a file', () => {
+  assert.equal(cleanFields('subtitle', { subtitle: 'hi \ud800 there' }).text, 'hi \ufffd there');
 });

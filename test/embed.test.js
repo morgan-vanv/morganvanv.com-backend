@@ -253,3 +253,8 @@ test('a question too long for any link says so, and fields stay within Discord\'
   const { embeds: [escaped] } = discordPayload(questionArgs('`*'.repeat(250)), now, publish, hex);
   assert.equal(field(escaped, 'Will publish').length, 1000);
 });
+
+test('a visitor can\'t write a masked link that passes for the real Publish link', () => {
+  const { embeds: [embed] } = discordPayload({ question: 'see [Publish as PR](https://evil.example)' }, now);
+  assert.equal(embed.description, 'see \\[Publish as PR\\](https://evil.example)');
+});

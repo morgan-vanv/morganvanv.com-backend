@@ -39,9 +39,15 @@ const SIGNATURE_CONTEXT = 'publish-link/v1\n';
  * in `http.method`; older OpenWhisk-style runtimes in `__ow_method`.
  */
 function methodOf(args) {
-  const http = args && typeof args.http === 'object' && args.http !== null && !Array.isArray(args.http) ? args.http : null;
-  const method = http ? http.method : args && args.__ow_method;
-  return typeof method === 'string' ? method.toLowerCase() : '';
+  if (!args || typeof args !== 'object') return '';
+  // When the platform sends `http`, it alone says the method: a request whose own parameters include
+  // something called `http` (not an object) mustn't fall through to an `__ow_method` it also sent.
+  if ('http' in args) {
+    const http = args.http;
+    const ok = typeof http === 'object' && http !== null && !Array.isArray(http);
+    return ok && typeof http.method === 'string' ? http.method.toLowerCase() : '';
+  }
+  return typeof args.__ow_method === 'string' ? args.__ow_method.toLowerCase() : '';
 }
 
 /**
@@ -51,13 +57,15 @@ function methodOf(args) {
  */
 function oneLine(value) {
   if (typeof value !== 'string') return '';
-  return value.replace(/[\p{Cf}]/gu, '').replace(/[^\P{Cc}\s]/gu, '').replace(/\s+/g, ' ').trim();
+  // A lone surrogate would show in Discord but turn into U+FFFD in the file, so it goes first.
+  return value.toWellFormed().replace(/[\p{Cf}]/gu, '').replace(/[^\P{Cc}\s]/gu, '').replace(/\s+/g, ' ').trim();
 }
 
 /** Several lines of visitor text: as oneLine, but line breaks kept (at most one blank line in a row). */
 function block(value) {
   if (typeof value !== 'string') return '';
   return value
+    .toWellFormed()
     .replace(/\r\n?/g, '\n')
     .replace(/[\p{Cf}]/gu, '')
     .replace(/[^\P{Cc}\s]/gu, '')
@@ -241,7 +249,9 @@ function signatureMatches(p, s, secret) {
 
 /** A secret long enough to sign with (`openssl rand -hex 32` makes 64 characters), or null. */
 function usableSecret(secret) {
-  return typeof secret === 'string' && secret.length >= MIN_SECRET_LENGTH && !secret.startsWith('${') ? secret : null;
+  // Trimmed here, so both functions sign with the same key even if .env has a stray space or CR.
+  const trimmed = typeof secret === 'string' ? secret.trim() : '';
+  return trimmed.length >= MIN_SECRET_LENGTH && !trimmed.startsWith('${') ? trimmed : null;
 }
 
 /**

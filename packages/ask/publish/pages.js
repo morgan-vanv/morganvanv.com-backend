@@ -35,6 +35,8 @@ const HEADERS = {
   'Referrer-Policy': 'no-referrer',
   'X-Content-Type-Options': 'nosniff',
   'Content-Security-Policy': CSP,
+  // frame-ancestors covers current browsers; this covers older ones.
+  'X-Frame-Options': 'DENY',
 };
 
 function escapeHtml(value) {
