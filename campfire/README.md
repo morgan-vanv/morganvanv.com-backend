@@ -150,24 +150,27 @@ and stays green.
    choose a subdomain, choose it there; otherwise use **Change** next to **Your subdomain**. The site already expects **`morganvanv`**, i.e.
    `https://campfire.morganvanv.workers.dev` (`campfireUrl` in the site's `site.config.ts`). If you pick
    something else, change `campfireUrl` to match.
-3. **Create an API token.** **My Profile → API Tokens → Create Token**, use the **Edit Cloudflare
-   Workers** template. Under **Account Resources** choose *Include → your account* (only this one), and
-   under **Zone Resources** *Include → All zones* is fine (you have none; the template's only zone
-   permission is Workers Routes, which the campfire doesn't use). Continue, create, and copy the token
-   (it's shown once). The template grants Workers Scripts, KV, R2 and Routes write, Workers Tail read,
-   Account Settings read and User Details/Memberships read: more than the campfire needs, but it's
-   Cloudflare's recommended setup for CI deploys.
+3. **Create an API token** that can only deploy Workers. **My Profile → API Tokens → Create Token →
+   Create Custom Token**. Give it one permission, *Account → Workers Scripts → Edit* (add *Account →
+   Account Settings → Read* only if a deploy says it needs it), set **Account Resources** to *Include →
+   your account*, and leave **Zone Resources** out. Continue, create, and copy the token (it's shown
+   once). Cloudflare's "Edit Cloudflare Workers" template also works, but it adds KV, R2 and Routes
+   write that the campfire never uses, so a leaked token could do more.
 4. **Find your account ID.** **Workers & Pages** → **Account details** on the right → copy **Account ID**
    (or press Ctrl/Cmd-K in the dashboard and search "Copy account ID").
 5. **Make a host key**, a long random string only you know:
    ```bash
    openssl rand -hex 32
    ```
-6. **Add three GitHub secrets** to `morgan-vanv/morganvanv.com-backend`: **Settings → Secrets and
-   variables → Actions → New repository secret**:
+6. **Add three GitHub secrets** to `morgan-vanv/morganvanv.com-backend`, in an environment so only `main`
+   can use them: **Settings → Environments → New environment** named `production`; under **Deployment
+   branches and tags** pick *Selected branches and tags* and add `main`; then **Add environment secret**
+   for each:
    - `CLOUDFLARE_API_TOKEN`: the token from step 3
    - `CLOUDFLARE_ACCOUNT_ID`: the ID from step 4
    - `CAMPFIRE_HOST_KEY`: the key from step 5 (optional; without it, host features stay off)
+
+   (Repository secrets work too, but then a workflow on any branch could read them.)
 7. **Deploy.** **Actions → Campfire → Run workflow** on `main` (or merge anything under `campfire/`).
    The first deploy creates the Worker and its Durable Object and uploads the host key as a Worker
    secret.
