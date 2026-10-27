@@ -97,6 +97,12 @@ describe('the campfire Worker', () => {
     expect((await log()).shouts.some(s => s.id === said.id)).toBe(false);
   });
 
+  it('says whether a host key is the right one', async () => {
+    expect((await call('/host', { key: 'test-host-key' })).status).toBe(204);
+    expect((await call('/host', { key: 'wrong' })).status).toBe(401);
+    expect((await call('/host')).status).toBe(401);
+  });
+
   it('refuses a wrong host key outright', async () => {
     expect((await shout({ nick: 'a', text: 'hi' }, '198.51.100.7', 'nope')).status).toBe(401);
   });

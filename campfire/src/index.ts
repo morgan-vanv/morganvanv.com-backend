@@ -14,7 +14,7 @@ type Handler = (request: Request, env: Env, url: URL, origin: string | null) => 
 const campfire = (env: Env) => env.CAMPFIRE.getByName(INSTANCE_NAME);
 
 const info: Handler = async (_request, _env, _url, origin) =>
-  json({ name: NAME, version: VERSION, source: SOURCE_URL, endpoints: ['GET|POST /visit', 'GET|POST /shouts', 'DELETE /shouts/:id'] }, 200, origin);
+  json({ name: NAME, version: VERSION, source: SOURCE_URL, endpoints: ['GET|POST /visit', 'GET|POST /shouts', 'DELETE /shouts/:id', 'GET /host'] }, 200, origin);
 
 const getVisits: Handler = async (_request, env, _url, origin) =>
   json({ count: await campfire(env).visit(false) }, 200, origin);
@@ -53,12 +53,23 @@ const removeShout = (rawId: string): Handler => async (request, env, _url, origi
   return (await campfire(env).remove(id)) ? empty(204, origin) : failure(404, 'No such shout.', origin);
 };
 
+/**
+ * Is this the host key? 204 if so, 401 if not, 404 with host features off. The site checks a key here
+ * before keeping it, so a link carrying a wrong key can't overwrite the real one in Morgan's browser.
+ */
+const checkHostKey: Handler = async (request, env, _url, origin) => {
+  const who = await checkHost(request.headers.get('Authorization'), env.CAMPFIRE_HOST_KEY);
+  if (who === 'host-off') return failure(404, 'Nothing here.', origin);
+  return who === 'host' ? empty(204, origin) : failure(401, 'That host key doesn\'t work here.', origin);
+};
+
 /** The routes: path, then method. */
 function route(method: string, path: string): Handler | 'wrong-method' | null {
   const table: Record<string, Partial<Record<string, Handler>>> = {
     '/': { GET: info },
     '/visit': { GET: getVisits, POST: addVisit },
     '/shouts': { GET: getShouts, POST: addShout },
+    '/host': { GET: checkHostKey },
   };
   const byMethod = table[path] ?? (/^\/shouts\/[^/]+$/.test(path) ? { DELETE: removeShout(path.slice('/shouts/'.length)) } : null);
   if (!byMethod) return null;

@@ -34,6 +34,7 @@ Every response is JSON (`Cache-Control: no-store`). Errors are `{ "error": "<sho
 | `GET /shouts?client=<id>` | The newest 50 shouts from the last 7 days, oldest first, and how many tabs are watching. | `200 { "shouts": [Shout], "here": 3 }` |
 | `POST /shouts` | Says something. Body: `{ "nick", "text", "website" }`. | `201 { "shout": Shout }` |
 | `DELETE /shouts/<id>` | Host only: takes a shout down. | `204`, or `404` if it's already gone |
+| `GET /host` | Is the bearer token the host key? The site asks before keeping a key. | `204` yes, `401` no, `404` with host features off |
 | `OPTIONS *` | CORS preflight. | `204` |
 
 A `Shout` is `{ "id": 12, "nick": "guest_4821", "text": "…", "at": "2026-10-27T05:12:00.000Z", "host": false }`.
