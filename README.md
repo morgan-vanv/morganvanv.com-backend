@@ -100,6 +100,37 @@ outside the form's limits.
    delete its branch, and open the same link again: it should say **Already published (closed)**, not offer to
    open a second PR.
 
+### Publishing from a bot's fork (recommended)
+
+With a fine-grained token of Morgan's (Setup, step 1), whoever holds the token can do what Morgan can on the
+site repo: open a PR **and merge it**, which deploys. The site's ruleset needs no approvals, and a token
+acting as Morgan inherits his admin bypass. The fork mode removes that: a separate bot account forks the
+site, `ask/publish` puts the branch and file on the fork and opens the PR from there. The bot's token has no
+access to the site repo at all, so a leaked token can open PRs like any GitHub user, and nothing else.
+
+1. **Make the bot account** (signed out of your own, or in a private window): a new GitHub account, e.g.
+   `morganvanv-bot`, with its own email (a `+bot` alias of yours works) and two-factor on. GitHub allows one
+   free machine account per person.
+2. **Fork the site** as the bot: `morgan-vanv/morganvanv.com` → **Fork**, keeping the name and copying only
+   `master`. In the fork, leave **Actions disabled** (forks start that way) so nothing runs there.
+3. **Make the bot's token** (as the bot): Settings → Developer settings → Personal access tokens →
+   **Tokens (classic)** → Generate new token, scope **`public_repo` only**, with an expiry (90 days is
+   reasonable; put a reminder in your calendar). A classic token, because fine-grained tokens can't open PRs on
+   a repo their owner doesn't belong to.
+4. **Fill `.env`:** `GITHUB_TOKEN=` the bot's token, `GITHUB_FORK=morganvanv-bot/morganvanv.com` (the bot's
+   name), `GITHUB_REPO=morgan-vanv/morganvanv.com` as before. Deploy: `doctl serverless deploy . --env .env`.
+5. **Revoke your own publishing token** (your account → Fine-grained tokens), so the only token that could
+   merge is gone.
+6. **Try it** as in Setup step 7. The PR now comes from `morganvanv-bot:visitor/...`. The first time, the
+   site's Actions may ask you to **Approve and run** the checks for a new contributor; after that they run on
+   their own. Fork PRs aren't labelled `visitor` (the bot can't label on the site repo); their `visitor:` title
+   and the site's **Visitor scope** check say what they are. For a question, the PR's "edit the file" link
+   opens the fork's branch, which you can edit because the PR allows maintainer edits.
+
+`GITHUB_FORK` must be `owner/repo` under a different account from `GITHUB_REPO`; anything else shows
+"Publishing is misconfigured". If the fork's `master` ever has commits of its own, syncing fails and the page
+says so (`syncing the fork`): reset the fork's `master` to the site's (Sync fork → Discard commits).
+
 ### Turning it off
 
 - **No more links:** set `PUBLISH_URL=off` in `.env` and redeploy (not empty: `doctl` refuses empty values). Embeds go back to the file to create by hand.
@@ -119,6 +150,8 @@ and press the link again (links last 30 days).
   every request.
 - GET never changes anything. Pages escape every value and send `Cache-Control: no-store`,
   `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer` and a CSP that allows no scripts.
+- With `GITHUB_FORK` set, the token is the bot's and can't write to or merge into the site repo; without it,
+  the token can (see "Publishing from a bot's fork").
 - The token is only ever sent in the `Authorization` header to `api.github.com`, and only `ask/publish` has it.
   Nothing logs the token or a visitor's text. Each GitHub call times out after 8 s (25 s for the whole run), and
   rate limits (including secondary ones) get a "try again in a minute" page.

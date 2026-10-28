@@ -23,6 +23,9 @@ packages:
           PUBLISH_SECRET: "${PUBLISH_SECRET}"
           GITHUB_TOKEN: "${GITHUB_TOKEN}"
           GITHUB_REPO: "${GITHUB_REPO}" # "off" means morgan-vanv/morganvanv.com
+          # The bot's fork, bot-account/morganvanv.com (README, "Publishing from a bot's fork"); "off" puts
+          # branches on GITHUB_REPO itself, which needs a token that can write there.
+          GITHUB_FORK: "${GITHUB_FORK}"
         limits:
           timeout: 30000 # ms: GitHub calls time out at 8 s each and 25 s in all, before this does
           memory: 128 # MB
