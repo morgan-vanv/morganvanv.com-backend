@@ -1,5 +1,5 @@
-# Weekly, grouped update PRs: the workflows' pinned actions and the campfire's npm packages. (Ask Morgan's
-# functions have no npm dependencies, so there's nothing there to watch.)
+# Weekly, grouped update PRs: the workflows' pinned actions and the two Workers' npm packages (dev tools only:
+# neither Worker has runtime dependencies).
 # Each waits a week after a release (security updates don't), so a hijacked version is usually gone first.
 version: 2
 updates:
@@ -15,6 +15,19 @@ updates:
 
   - package-ecosystem: npm
     directory: /campfire
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      # Wrangler and the Vitest plugin pin the same Miniflare, so they move together.
+      cloudflare:
+        patterns: ['wrangler', '@cloudflare/*']
+      dev-tools:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /ask
     schedule:
       interval: weekly
     cooldown:

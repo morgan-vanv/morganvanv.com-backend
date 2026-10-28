@@ -1,12 +1,10 @@
 // Run with: node --test
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const crypto = require('node:crypto');
 const {
   makeItem, readLink, publishLink, encodeItem, sign, slugify, cleanFields, oneLine, block, isValidItem, usableSecret, methodOf, MAX_LINK_LENGTH,
-} = require('../packages/ask/submit/publish-link');
+} = require('../../src/publish-link');
 
 const SECRET = 'a'.repeat(64);
 const PUBLISH_URL = 'https://faas-nyc1-x.doserverless.co/api/v1/web/fn-x/ask/publish';
@@ -21,11 +19,6 @@ function parts(url) {
   const query = new URL(url).searchParams;
   return { p: query.get('p'), s: query.get('s') };
 }
-
-test('the two copies of publish-link.js are the same file (edit one, copy it over the other)', () => {
-  const read = fn => fs.readFileSync(path.join(__dirname, '..', 'packages', 'ask', fn, 'publish-link.js'), 'utf8');
-  assert.equal(read('publish'), read('submit'));
-});
 
 test('an item per publishable kind, built from the cleaned fields', () => {
   assert.deepEqual(makeItem(subtitle, now, hex), {

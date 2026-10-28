@@ -18,8 +18,8 @@ const API = 'https://api.github.com';
 const BASE_BRANCH = 'master';
 const LABEL = { name: 'visitor', color: 'c9922a', description: 'Suggested by a visitor to the site' };
 
-// Each call gets 8 s, and the whole run 25 s, so a hung GitHub shows our page, not DigitalOcean's
-// timeout (the function's limit is 30 s).
+// Each call gets 8 s, and the whole run 25 s, so a hung GitHub shows our page rather than a browser that
+// never hears back.
 const CALL_TIMEOUT_MS = 8000;
 const RUN_BUDGET_MS = 25000;
 

@@ -1,0 +1,46 @@
+// Ask Morgan: one Worker, two routes (src/index.mjs). Deployed by .github/workflows/ask.yml.
+// Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ask",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-10-23",
+  // node:crypto (HMAC, constant-time compare) and node:zlib (link payloads) for publish-link.js.
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+
+  // Not secret; change them by PR. The secrets (DISCORD_WEBHOOK_URL, PUBLISH_SECRET, GITHUB_TOKEN) are
+  // uploaded by the deploy from the repo's `production` environment (README).
+  "vars": {
+    // Where "Publish as PR" links point: this Worker's /publish. "off" means no links (the embed shows the
+    // file to add by hand instead).
+    "PUBLISH_URL": "https://ask.morganvanv.workers.dev/publish",
+    "GITHUB_REPO": "morgan-vanv/morganvanv.com",
+    // The bot's fork (README, "Publishing from a bot's fork"), or "off" to put branches on GITHUB_REPO.
+    "GITHUB_FORK": "off"
+  },
+
+  // Per Cloudflare location and approximate, which is plenty here. Periods can only be 10 or 60 s.
+  // Keys are the visitor's IP (never stored) or "all".
+  "ratelimits": [
+    { "name": "SUBMIT_PER_VISITOR", "namespace_id": "2001", "simple": { "limit": 5, "period": 60 } },
+    // Discord allows a webhook about 30 messages a minute; stay under it.
+    { "name": "SUBMIT_ALL", "namespace_id": "2002", "simple": { "limit": 20, "period": 60 } },
+    { "name": "PUBLISH_PER_VISITOR", "namespace_id": "2003", "simple": { "limit": 20, "period": 60 } }
+  ],
+
+  "observability": {
+    "enabled": true,
+    // Publish links carry the item in their query string; keep it out of logs.
+    "redact_query_string": true,
+    "logs": {
+      "enabled": true,
+      // Our own console.error only, never per-request metadata about visitors.
+      "invocation_logs": false
+    }
+  },
+
+  // `npm run dev` serves on http://localhost:8788 (the campfire has 8787).
+  "dev": { "port": 8788 }
+}

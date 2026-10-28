@@ -1,6 +1,6 @@
 // The publish function's pages: small, plain and dark, no scripts. Every interpolated value is escaped.
 
-const crypto = require('crypto');
+const crypto = require('node:crypto');
 
 const STYLE = [
   ':root{color-scheme:dark}',

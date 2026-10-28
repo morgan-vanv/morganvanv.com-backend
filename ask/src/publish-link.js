@@ -1,16 +1,14 @@
 // A "Publish as PR" link: one visitor suggestion, signed so the stateless publish function can trust it,
 // and the file it becomes in the site's repo (content/, read by the site; see its content/README.md).
 //
-// ask/submit makes the links (into Morgan's private Discord) and ask/publish checks them. DigitalOcean
-// deploys each function folder on its own, so this file lives in both folders; a test fails if the
-// two copies ever differ (edit one, copy it over the other).
+// /submit makes the links (into Morgan's private Discord) and /publish checks them.
 //
 // A link carries the item itself: `p` is base64url JSON, `s` an HMAC-SHA256 of `publish-link/v1\n` + `p`
 // keyed by PUBLISH_SECRET. The item is built from the submission's structured fields, cleaned and held to
 // the form's own limits, never from the free-text message: it becomes a file in the site's repo.
 
-const crypto = require('crypto');
-const zlib = require('zlib');
+const crypto = require('node:crypto');
+const zlib = require('node:zlib');
 
 const PUBLISHABLE_KINDS = ['question', 'subtitle', 'star'];
 
@@ -35,8 +33,8 @@ const ID_PATTERN = /^(\d{4}-\d{2}-\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-[0-9a-f]{8}$
 const SIGNATURE_CONTEXT = 'publish-link/v1\n';
 
 /**
- * The request's HTTP method, lowercased, or '' when the platform didn't say. DigitalOcean puts it
- * in `http.method`; older OpenWhisk-style runtimes in `__ow_method`.
+ * The request's HTTP method, lowercased, or '' when it wasn't given. The Worker (index.mjs) puts it in
+ * `http.method`, as DigitalOcean's web actions did; `__ow_method` is the older OpenWhisk spelling.
  */
 function methodOf(args) {
   if (!args || typeof args !== 'object') return '';
@@ -249,7 +247,7 @@ function signatureMatches(p, s, secret) {
 
 /** A secret long enough to sign with (`openssl rand -hex 32` makes 64 characters), or null. */
 function usableSecret(secret) {
-  // Trimmed here, so both functions sign with the same key even if .env has a stray space or CR.
+  // Trimmed here, so /submit and /publish sign with the same key even if the secret has a stray space or CR.
   const trimmed = typeof secret === 'string' ? secret.trim() : '';
   return trimmed.length >= MIN_SECRET_LENGTH && !trimmed.startsWith('${') ? trimmed : null;
 }

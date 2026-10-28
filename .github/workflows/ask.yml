@@ -1,37 +1,137 @@
-# Ask Morgan (packages/ask/ and test/): run its tests on every PR into main, so the ruleset can require them.
+# Ask Morgan (ask/): test on every PR into main; deploy the Worker to Cloudflare from main when ask/ changes.
 #
-# No path filter on purpose: a required check that never reports would block PRs that don't touch it.
-# The run takes a few seconds. Actions are pinned to full commit SHAs, as in the campfire's workflow;
-# Dependabot keeps them current.
+# Actions are pinned to full commit SHAs (the deploy step receives a Cloudflare token);
+# Dependabot (.github/dependabot.yml) proposes updates weekly.
+#
+# Deploying needs, in the production environment: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (shared
+# with the campfire) and ASK_DISCORD_WEBHOOK_URL (where submissions go). Until all three exist the deploy is
+# skipped with a notice, so the workflow stays green. PUBLISH_SECRET and PUBLISH_GITHUB_TOKEN are optional:
+# with both, "Publish as PR" works (ask/README.md). Each becomes the Worker secret DISCORD_WEBHOOK_URL,
+# PUBLISH_SECRET or GITHUB_TOKEN.
 name: Ask Morgan
 
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
+    paths:
+      - 'ask/**'
+      - '.github/workflows/ask.yml'
+  # Every PR, not only ones that touch ask/: "Ask tests" is a required check, and a required check that
+  # never reports would block the PR. Deploys still only follow ask/ changes (push, above).
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ask-${{ github.ref }}
-  cancel-in-progress: true
+  # One deploy at a time; PR runs only replace older runs of the same PR.
+  group: ask-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: ask
 
 jobs:
   test:
     name: Ask tests
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          # The functions' runtime on DigitalOcean (nodejs:24 in project.yml once #4 lands).
-          node-version: 24
+          node-version-file: ask/.nvmrc
+          cache: npm
+          cache-dependency-path: ask/package-lock.json
+      # No dependency install scripts (as in the campfire's workflow): esbuild and workerd ship binaries.
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - name: Build (dry run)
+        run: npx wrangler deploy --dry-run --outdir dist
+
+  deploy:
+    name: Deploy
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The secrets live in this environment, which only main may deploy from.
+    environment: production
+    env:
+      READY: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' && secrets.ASK_DISCORD_WEBHOOK_URL != '' }}
+      HAS_PUBLISH_SECRET: ${{ secrets.PUBLISH_SECRET != '' }}
+      HAS_GITHUB_TOKEN: ${{ secrets.PUBLISH_GITHUB_TOKEN != '' }}
+    steps:
+      - name: Check for secrets
+        if: env.READY != 'true'
+        run: |
+          msg="Skipping deploy: add CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and ASK_DISCORD_WEBHOOK_URL to the production environment, then run this workflow again (ask/README.md, 'Setting it up')."
+          echo "::notice title=Ask Morgan not deployed::$msg"
+          echo "### Ask Morgan not deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.READY == 'true'
+        with:
+          # This job holds the Cloudflare token; don't leave a GitHub token in .git beside it.
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: env.READY == 'true'
+        with:
+          node-version-file: ask/.nvmrc
+          # No npm cache in the job that holds the token: a poisoned cache entry could change what deploys.
           package-manager-cache: false
-      # The tests need no npm packages. Only test/: a bare `node --test` would also pick up the campfire's
-      # Vitest files under campfire/ (Node 24 runs .ts), which need the Workers runtime.
-      - run: node --test 'test/**/*.test.js'
+      - run: npm ci --ignore-scripts
+        if: env.READY == 'true'
+
+      # Only the optional secrets that exist are uploaded (an empty one would fail the upload).
+      - name: Which secrets to upload
+        id: secrets
+        if: env.READY == 'true'
+        run: |
+          {
+            echo 'names<<EOF'
+            echo DISCORD_WEBHOOK_URL
+            if [ "$HAS_PUBLISH_SECRET" = 'true' ]; then echo PUBLISH_SECRET; fi
+            if [ "$HAS_GITHUB_TOKEN" = 'true' ]; then echo GITHUB_TOKEN; fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Cloudflare
+        id: deploy
+        if: env.READY == 'true'
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: ask
+          command: deploy
+          secrets: ${{ steps.secrets.outputs.names }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.ASK_DISCORD_WEBHOOK_URL }}
+          PUBLISH_SECRET: ${{ secrets.PUBLISH_SECRET }}
+          GITHUB_TOKEN: ${{ secrets.PUBLISH_GITHUB_TOKEN }}
+
+      - name: Say hello
+        if: env.READY == 'true' && steps.deploy.outputs.deployment-url != ''
+        env:
+          URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          echo "### Ask Morgan deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+          # A brand-new workers.dev name can take a minute to resolve, so this only warns.
+          for i in 1 2 3 4 5 6; do
+            if body=$(curl -fsS "$URL/"); then
+              echo "$body"
+              # The publish page answers without a link (400 "No link here"), so the pages work too.
+              status=$(curl -sS -o /dev/null -w '%{http_code}' "$URL/publish")
+              [ "$status" = 400 ] || echo "::warning::$URL/publish answered $status, expected 400."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::Deployed, but $URL/ didn't answer yet. Try it in a minute."
