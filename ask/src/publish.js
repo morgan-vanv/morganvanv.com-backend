@@ -15,7 +15,8 @@ const REPO_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 /** An environment value, or '' when unset (or left as an unfilled `${…}` template). */
 function setting(env, name) {
   const value = typeof env[name] === 'string' ? env[name].trim() : '';
-  // doctl refuses an empty substitution, so "off" is how .env switches a setting off.
+  // "off" switches a setting off (a wrangler.jsonc var can't be removed by an empty secret, and doctl
+  // refused empty values, so "off" has always been the way).
   return value.startsWith('${') || value.toLowerCase() === 'off' ? '' : value;
 }
 
@@ -36,7 +37,7 @@ function githubErrorPage(error) {
   if (error.status === 401) {
     return errorPage(502, 'GitHub refused the token',
       'GITHUB_TOKEN was refused: it has probably expired (fine-grained tokens last a year at most). '
-      + 'Make a new one as in the README, put it in .env and redeploy, then press this link again. '
+      + 'Make a new one as in the README, update the PUBLISH_GITHUB_TOKEN secret and rerun the Ask deploy (README), then press this link again. '
       + 'Submissions still reach Discord in the meantime.');
   }
   if (error.status === 403 || error.status === 404) {

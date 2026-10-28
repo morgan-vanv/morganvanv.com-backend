@@ -3,9 +3,9 @@
 // it into the site's repo, and nothing is ever written to the site's repo itself.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { makeItem, publishLink } = require('../packages/ask/publish/publish-link');
-const { filePath, fileContent, branchName, prTitle } = require('../packages/ask/publish/entry');
-const { handle } = require('../packages/ask/publish/publish');
+const { makeItem, publishLink } = require('../../src/publish-link');
+const { filePath, fileContent, branchName, prTitle } = require('../../src/entry');
+const { handle } = require('../../src/publish');
 
 const SECRET = 'a'.repeat(64);
 const BOT_TOKEN = 'ghp_BOTTOKEN';

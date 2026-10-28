@@ -1,10 +1,10 @@
 // Run with: node --test
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { makeItem, publishLink } = require('../packages/ask/publish/publish-link');
-const { ANSWER_MARKER, filePath, fileContent, branchName, prTitle, prBody, commitMessage, codeSpan, codeBlock } = require('../packages/ask/publish/entry');
-const { escapeHtml, confirmPage } = require('../packages/ask/publish/pages');
-const { handle } = require('../packages/ask/publish/publish');
+const { makeItem, publishLink } = require('../../src/publish-link');
+const { ANSWER_MARKER, filePath, fileContent, branchName, prTitle, prBody, commitMessage, codeSpan, codeBlock } = require('../../src/entry');
+const { escapeHtml, confirmPage } = require('../../src/pages');
+const { handle } = require('../../src/publish');
 
 const SECRET = 'a'.repeat(64);
 const TOKEN = 'github_pat_SECRETTOKEN';

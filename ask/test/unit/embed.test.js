@@ -1,8 +1,8 @@
 // Run with: node --test
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { problem, discordPayload, publishConfig, matchesMessage, discordEscape } = require('../packages/ask/submit/embed');
-const { readLink, makeItem, fileContent, ANSWER_MARKER } = require('../packages/ask/submit/publish-link');
+const { problem, discordPayload, publishConfig, matchesMessage, discordEscape } = require('../../src/embed');
+const { readLink, makeItem, fileContent, ANSWER_MARKER } = require('../../src/publish-link');
 
 const now = new Date('2026-10-27T05:00:00Z');
 
@@ -81,7 +81,7 @@ test('the file is the one publish/entry.js would commit, byte for byte', () => {
     const { embeds: [embed] } = discordPayload(args, now, null, hex);
     const shown = /```(?:json|md)\n([\s\S]*)```$/.exec(embed.fields[0].value)[1];
     assert.equal(shown, fileContent(makeItem(args, now, hex)));
-    assert.equal(shown, require('../packages/ask/publish/entry').fileContent(makeItem(args, now, hex)));
+    assert.equal(shown, require('../../src/entry').fileContent(makeItem(args, now, hex)));
   }
 });
 

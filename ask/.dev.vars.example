@@ -1,0 +1,4 @@
+# Copy to .dev.vars (gitignored) for `npm run dev`. Values here are for your machine only.
+DISCORD_WEBHOOK_URL=off
+PUBLISH_SECRET=local-publish-secret-for-dev-only-0123456789
+GITHUB_TOKEN=off
