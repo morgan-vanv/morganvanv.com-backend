@@ -6,7 +6,7 @@ The site's Contact form, its "name a star" panel and "Publish as PR", as one Clo
 | Route | What it does |
 | --- | --- |
 | `POST /submit` | Takes the site's Contact form and "name a star" POSTs and forwards them to Morgan's private Discord channel (`src/submit.js`, `src/embed.js`). |
-| `GET\|HEAD\|POST /publish` | Turns a question, subtitle or star name from Discord into a pull request on the site's repo (`src/publish.js`, `src/github.js`). |
+| `GET\|HEAD /publish` | Checks a signed "Publish as PR" link from Discord and sends Morgan on to GitHub's new-file editor with the file filled in (`src/publish.js`). |
 | `GET /` | Name and version. |
 
 `src/index.mjs` is the only Workers-specific file: routing, CORS, body limits and rate limits. The handlers take
@@ -14,7 +14,7 @@ the request's fields and return `{ statusCode, headers, body }`, so they're test
 
 ```bash
 npm ci --ignore-scripts
-npm test          # node --test (the handlers, with fake Discord and GitHub), then Vitest in workerd (the Worker)
+npm test          # node --test (the handlers, with a fake Discord), then Vitest in workerd (the Worker)
 npm run dev       # http://localhost:8788; copy .dev.vars.example to .dev.vars first
 npm run build     # wrangler deploy --dry-run
 ```
@@ -31,17 +31,17 @@ This is how it's set up today; use it to rebuild or rotate.
      "Discord responded with status 404"), the URL is wrong or the webhook was deleted.
    - `PUBLISH_SECRET`: `openssl rand -hex 32` (at least 32 characters, or links are left off). Changing it
      invalidates every link already in Discord. Without it, no "Publish as PR" links.
-   - `PUBLISH_GITHUB_TOKEN`: the publishing token (better, the bot's: see "Publishing from a bot's fork").
-     Without it, the links show "Publishing is off".
+
+   No GitHub token: since 2.1 the Worker never writes to GitHub (below).
 2. **Deploy:** merge anything under `ask/`, or **Actions → Ask Morgan → Run workflow** on `main`. The deploy
-   uploads the three as the Worker secrets `DISCORD_WEBHOOK_URL`, `PUBLISH_SECRET` and `GITHUB_TOKEN`, then
+   uploads the two as the Worker secrets `DISCORD_WEBHOOK_URL` and `PUBLISH_SECRET`, then
    checks that `/publish` answers 400 ("No link here"; a warning means `PUBLISH_SECRET` didn't take).
-3. **Check it:** `https://ask.morganvanv.workers.dev/` answers `{"name":"ask","version":"2.0.0",…}`. The site's
+3. **Check it:** `https://ask.morganvanv.workers.dev/` answers `{"name":"ask","version":"2.1.0",…}`. The site's
    `askMorganSubmitUrl` (`src/shared/config/site.config.ts`) is `https://ask.morganvanv.workers.dev/submit`.
 4. **Try it:** suggest a subtitle on the site. The Discord message should show **Will publish** and a
-   **Publish as PR** link; open it, press the button, and you should land on a new PR. This test PR stays
-   public even after you close it, so use text you don't mind. Close it, delete its branch, and open the
-   same link again: it should say **Already published (closed)**.
+   **Publish as PR** link; open it and you should land in GitHub's editor with the file filled in. Commit it
+   to a new branch and open the PR (below). A test PR stays public even after you close it, so use text you
+   don't mind.
 
 Errors are in Cloudflare → Workers & Pages → ask → Observability (only our own `console.error` lines; nothing
 about visitors is logged).
@@ -62,22 +62,26 @@ address that no longer answers. They're signed with the same secret, so keep eve
 2. The link points to `/publish` and carries the item itself, signed with `PUBLISH_SECRET`
    (an HMAC, so nobody can make or change one). It's built from the form's structured fields, cleaned and held
    to the form's limits, never from the free-text message. Links last 30 days.
-3. Opening the link (GET) shows what would be published, the PR title, the file it goes in and one
-   **Open the pull request** button. Opening it does nothing else: Discord or a browser may fetch a link by
-   itself. A link already used says so and links its PR (open, closed or merged).
-4. The button (POST) checks everything again, then makes branch `visitor/<kind>/<id>` from `master`, adds one
-   new file and opens a PR into `master` labelled `visitor`, and takes you to it. Pressing it twice, or again
-   after an error, finds what's already there and returns the same PR, even one that was closed and had its
-   branch deleted (it's found by the `Visitor item:` line in its body).
-5. **Merge to publish, close to reject.** For a question, write the answer in the PR first (the body links
-   straight to the file's editor on that branch).
+3. Opening the link checks the signature and the expiry, then sends you (303) to GitHub's **new file** page on
+   the site's `master`, with the path and the file's contents filled in
+   (`github.com/<repo>/new/master?filename=…&value=…`). Opening it changes nothing: Discord or a browser may
+   fetch a link by itself, and GitHub's editor does nothing until you commit.
+4. In the editor, for a question, **write your answer under the marker line**. Then **Commit changes… →
+   Create a new branch → Propose changes → Create pull request** (the ruleset doesn't allow committing straight
+   to `master`). You're signed in as yourself, so the PR is yours: the Worker holds no GitHub credential.
+5. **Merge to publish, close to reject.**
 
-**Pressing the button makes the text public.** The site's repo is public: the PR's body, its branch and its
-commit are visible on GitHub as soon as it opens, and closing it doesn't remove them (GitHub keeps the commit
-under `refs/pull/N/head`). Only press it for text you're happy to have out there, even if you then reject it.
-PR titles, branch names and commit messages hold only the kind and id (`visitor: subtitle
-2026-10-27-a-certified-night-owl-3fa9c1b2`), never the visitor's text: the site squash-merges with the PR
-title, so a title lands on `master`, where "fixes #12" would close an issue.
+**Committing makes the text public.** The site's repo is public: the branch and commit are visible as soon as
+you commit, and closing the PR doesn't remove them (GitHub keeps the commit under `refs/pull/N/head`). Only
+commit text you're happy to have out there, even if you then reject it. GitHub's default commit message and
+PR title are `Create <id>.json` (or `.md`): the id, never the visitor's text. Keep them that way; the site
+squash-merges with the PR title, so a title lands on `master`.
+
+GitHub's editor puts a filled-in `.json` file on one line (`{"text":"…","by":"sam","added":"2026-10"}`);
+that's fine, the site only parses it. Markdown (a question) arrives exactly as written.
+
+A link opened twice opens the editor twice; committing the same file again fails ("A file with the same name
+already exists" once the first is merged), and an open PR for it shows up in the repo's pull requests.
 
 One file per entry, so pending PRs never conflict. `<id>` is `YYYY-MM-DD-<slug>-<8 hex>` (UTC date):
 
@@ -102,53 +106,14 @@ long. If the file won't fit in a Discord field (1024 characters, after escaping)
 the path. No file is shown when the message doesn't match its fields, for the dropbox, or for anything
 outside the form's limits.
 
-### Publishing from a bot's fork (recommended)
-
-With a fine-grained token of Morgan's (Contents and Pull requests read/write on the site repo, as `ask-publish` is), whoever holds the token can do what Morgan can on the
-site repo: open a PR **and merge it**, which deploys. The site's ruleset needs no approvals, and a token
-acting as Morgan inherits his admin bypass. The fork mode removes that: a separate bot account forks the
-site, `/publish` puts the branch and file on the fork and opens the PR from there. The bot's token has no
-access to the site repo at all, so a leaked token can open PRs like any GitHub user, and nothing else.
-
-1. **Make the bot account** (signed out of your own, or in a private window): a new GitHub account, e.g.
-   `morganvanv-bot`, with its own email (a `+bot` alias of yours works) and two-factor on. GitHub allows one
-   free machine account per person.
-2. **Fork the site** as the bot: `morgan-vanv/morganvanv.com` → **Fork**, keeping the name and copying only
-   `master`. In the fork, leave **Actions disabled** (forks start that way) so nothing runs there.
-3. **Make the bot's token** (as the bot): Settings → Developer settings → Personal access tokens →
-   **Tokens (classic)** → Generate new token, scope **`public_repo` only**, with an expiry (90 days is
-   reasonable; put a reminder in your calendar). A classic token, because fine-grained tokens can't open PRs on
-   a repo their owner doesn't belong to.
-4. **Switch over:** replace the `PUBLISH_GITHUB_TOKEN` secret (production environment) with the bot's token,
-   and open a PR setting `"GITHUB_FORK": "morganvanv-bot/morganvanv.com"` (the bot's name) in
-   `wrangler.jsonc`. Merging it deploys with both.
-5. **Revoke your own publishing token** (your account → Fine-grained tokens), so the only token that could
-   merge is gone.
-6. **Try it** as in Setting it up, step 5. The PR now comes from `morganvanv-bot:visitor/...`. The first time, the
-   site's Actions may ask you to **Approve and run** the checks for a new contributor; after that they run on
-   their own. Fork PRs aren't labelled `visitor` (the bot can't label on the site repo); their `visitor:` title
-   and the site's **Visitor scope** check say what they are. For a question, the PR's "edit the file" link
-   opens the fork's branch, which you can edit because the PR allows maintainer edits.
-
-`GITHUB_FORK` must be `owner/repo` under a different account from `GITHUB_REPO`; anything else shows
-"Publishing is misconfigured". If the fork's `master` ever has commits of its own, syncing fails and the page
-says so (`syncing the fork`): reset the fork's `master` to the site's (Sync fork → Discard commits).
-
-
 ### Turning it off
 
 - **No more links:** set `"PUBLISH_URL": "off"` in `wrangler.jsonc` (by PR). Embeds go back to the file to
   create by hand.
-- **Kill the links already in Discord too:** revoke the token on GitHub. Making a new `PUBLISH_SECRET` instead
-  invalidates every existing link but leaves publishing on for new ones.
+- **Kill the links already in Discord too:** make a new `PUBLISH_SECRET` and run the deploy. Every existing link
+  then says "Not a valid link"; new ones work.
 - **Stop submissions:** delete the Worker's `DISCORD_WEBHOOK_URL` (Cloudflare → Workers & Pages → ask →
   Settings → Variables and Secrets); `/submit` then answers 503 and the site shows its error.
-
-### When the token expires
-
-Pressing a link shows "GitHub refused the token"; submissions still reach Discord and nothing else breaks.
-Make a new token, replace `PUBLISH_GITHUB_TOKEN`, run the deploy again, and press the link again (links last
-30 days).
 
 ### Security notes
 
@@ -157,16 +122,14 @@ Make a new token, replace `PUBLISH_GITHUB_TOKEN`, run the deploy again, and pres
   every request.
 - GET never changes anything. Pages escape every value and send `Cache-Control: no-store`,
   `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer` and a CSP that allows no scripts.
-- With `GITHUB_FORK` set, the token is the bot's and can't write to or merge into the site repo; without it,
-  the token can (see "Publishing from a bot's fork").
-- The token is only ever sent in the `Authorization` header to `api.github.com`, and only `/publish` uses it.
-  Nothing logs the token or a visitor's text. Each GitHub call times out after 8 s (25 s for the whole run), and
-  rate limits (including secondary ones) get a "try again in a minute" page.
-- Visitor text in a PR body sits inside code, so it can't @-mention anyone; it never reaches a title, branch or
-  commit message. Keep the site repo's squash message on "default message" (`COMMIT_MESSAGES`): with "pull
-  request title and description" the PR body, visitor text included, would land in a `master` commit.
+- The Worker holds no GitHub credential and makes no GitHub calls. A link only ever leads to GitHub's editor,
+  where nothing happens until Morgan, signed in as himself, reads the file and commits it. The worst a leaked
+  `PUBLISH_SECRET` allows is forged links that open a filled-in editor, and only for someone with write
+  access to the site to commit. Nothing logs a visitor's text.
+- The editor URL only ever points at `https://github.com/<GITHUB_REPO>/new/master`, with the path and contents
+  as query parameters (at most about 3.3 kB for the longest question).
 - `/submit` refuses anything but a JSON POST (OPTIONS is the CORS preflight; only the site's origins get CORS
   headers) and bodies over 16 kB. A field called `http` can't change the method the handlers see.
 - Rate limits (Workers Rate Limiting, approximate and per Cloudflare location): 5 submissions a minute per
-  visitor, 20 a minute in all (under Discord's webhook limit), 20 publish requests a minute per visitor. The
+  visitor, 20 a minute in all (under Discord's webhook limit), 20 publish link opens a minute per visitor. The
   IP is only the limiter's key: nothing stores or logs it, and invocation logs are off.

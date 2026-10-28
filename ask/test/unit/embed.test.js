@@ -76,12 +76,12 @@ test('a question shows content/mailbag/<id>.md with the empty answer marker, to 
     + `---\nasked: 2026-10-27\n---\n> why the cat?\n>\n> really\n\n${ANSWER_MARKER}\n\`\`\``);
 });
 
-test('the file is the one publish/entry.js would commit, byte for byte', () => {
+test('the file shown is the one /publish fills GitHub\'s editor with, byte for byte', () => {
   for (const args of [subtitleArgs('hi "there"', null), starArgs('G', null, { ra: 1, dec: -2, mag: 3 }), questionArgs('ok?')]) {
     const { embeds: [embed] } = discordPayload(args, now, null, hex);
     const shown = /```(?:json|md)\n([\s\S]*)```$/.exec(embed.fields[0].value)[1];
     assert.equal(shown, fileContent(makeItem(args, now, hex)));
-    assert.equal(shown, require('../../src/entry').fileContent(makeItem(args, now, hex)));
+    assert.equal(shown, require('../../src/publish-link').fileContent(makeItem(args, now, hex)));
   }
 });
 
