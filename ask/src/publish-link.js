@@ -162,7 +162,7 @@ function makeItem(args, now = new Date(), randomHex = () => crypto.randomBytes(4
   return isValidItem(item) ? item : null;
 }
 
-// The file an item becomes. ask/publish commits it; ask/submit shows it in Discord to add by hand
+// The file an item becomes. /publish fills GitHub's editor with it; /submit shows it in Discord to add by hand
 // when publishing is off. The site reads these exact paths and shapes:
 //   content/subtitles/<id>.json  { "text", "by", "added": "YYYY-MM" }
 //   content/stars/<id>.json      { "ra", "dec", "name", "by", "added": "YYYY-MM", "near"? }

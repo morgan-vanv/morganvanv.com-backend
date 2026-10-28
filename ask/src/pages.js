@@ -54,7 +54,7 @@ function page(statusCode, title, inner, extraHeaders = {}) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
-<title>${escapeHtml(title)} · ask/publish</title>
+<title>${escapeHtml(title)} · Ask Morgan</title>
 <style>${STYLE}</style>
 </head>
 <body>
