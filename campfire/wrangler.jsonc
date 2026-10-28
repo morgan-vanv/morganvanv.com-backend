@@ -1,0 +1,33 @@
+// The campfire: one Worker in front of one SQLite-backed Durable Object.
+// Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "campfire",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-23",
+  "workers_dev": true,
+  // No preview URLs: there's only one campfire, and previews would share its Durable Object.
+  "preview_urls": false,
+
+  "durable_objects": {
+    "bindings": [{ "name": "CAMPFIRE", "class_name": "Campfire" }]
+  },
+  // SQLite-backed (the only kind the Workers Free plan allows). Never edit a migration once deployed;
+  // add a new tagged one instead.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Campfire"] }],
+
+  "observability": {
+    "enabled": true,
+    // Drop query strings (the shoutbox's ?client=<id>) from URLs in logs and traces.
+    "redact_query_string": true,
+    "logs": {
+      "enabled": true,
+      // Our own console.log/error only. Invocation logs keep metadata about every request, which can
+      // include where the visitor is; the campfire promises to keep nothing about visitors.
+      "invocation_logs": false
+    }
+  },
+
+  // `npm run dev` serves on http://localhost:8787.
+  "dev": { "port": 8787 }
+}

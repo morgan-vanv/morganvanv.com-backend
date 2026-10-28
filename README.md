@@ -1,6 +1,13 @@
 # morganvanv.com-backend
 back-end repo, don't expect it to be as pretty as the front-end
 
+Two pieces, deployed separately:
+
+- **Ask Morgan** (`packages/ask/`, `project.yml`): DigitalOcean Functions that forward the site's Contact form to Discord and turn approved submissions into PRs (below).
+- **The campfire** (`campfire/`): a Cloudflare Worker + SQLite Durable Object behind the site's visitor counter and shoutbox. API, privacy notes, local dev and setup: [`campfire/README.md`](campfire/README.md). Deployed by `.github/workflows/campfire.yml`.
+
+## Ask Morgan
+
 DigitalOcean Functions (runtime pinned to `nodejs:24`, no dependencies), deployed by hand:
 
 ```bash
@@ -12,7 +19,7 @@ doctl serverless deploy . --env .env
 | `ask/submit` | Takes the site's Contact form and "name a star" POSTs and forwards them to Morgan's private Discord channel. |
 | `ask/publish` | Turns a question, subtitle or star name from Discord into a pull request on the site's repo ("Publish as PR"). |
 
-Tests: `node --test` (no install needed; on Node 22+ don't pass `test/`, a directory isn't accepted).
+Tests: `node --test 'test/**/*.test.js'` (no install needed; a bare `node --test` would also try the campfire's Vitest files, and a plain directory isn't accepted on Node 22+). The campfire has its own: `cd campfire && npm ci && npm test`.
 
 ## Publish as PR
 
