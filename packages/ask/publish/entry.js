@@ -45,7 +45,8 @@ function signed(degrees) {
   return `${degrees < 0 ? '−' : '+'}${Math.abs(degrees)}°`;
 }
 
-function prBody(item, repo) {
+/** `branchRepo` is where the branch lives: the bot's fork when publishing from one, else `repo`. */
+function prBody(item, repo, branchRepo = repo) {
   const path = filePath(item);
   const credit = item.fields.by ? codeSpan(item.fields.by) : 'anonymous';
   const lines = [];
@@ -61,7 +62,7 @@ function prBody(item, repo) {
       '',
     );
   } else {
-    const edit = `https://github.com/${repo}/edit/${branchName(item)}/${path}`;
+    const edit = `https://github.com/${branchRepo}/edit/${branchName(item)}/${path}`;
     lines.push(
       `A visitor asked a question for the mailbag on ${day(item.iat)}.`,
       '',

@@ -2,6 +2,14 @@
 // labelled `visitor`. Safe to run again for the same item (a double click, a retry after an error):
 // whatever already exists is reused, and an existing PR is returned rather than a second one opened.
 //
+// Two ways to run (README, "Publishing from a bot's fork"):
+// - With `fork` set (GITHUB_FORK, e.g. "some-bot/morganvanv.com"): the branch and file go on the bot's
+//   fork, and the PR is opened from it into `repo`. The token is the bot's and needs no access to `repo`
+//   at all, so a leaked token can open PRs like any GitHub user, never push to or merge into the site.
+//   The bot can't label PRs on `repo`, so fork PRs go unlabelled (their "visitor:" title and the site's
+//   Visitor scope check say what they are), and they allow maintainer edits so Morgan can answer on them.
+// - Without it: the branch lives on `repo` itself, which needs a token that can write there.
+//
 // The token only ever goes in the Authorization header. Nothing here logs it or the visitor's text.
 
 const { branchName, filePath, fileContent, prTitle, prBody, idLine, commitMessage } = require('./entry');
@@ -41,8 +49,7 @@ function isRateLimited(response, data) {
     || /rate limit/i.test(message);
 }
 
-function client({ fetch, token, repo, callTimeoutMs = CALL_TIMEOUT_MS, budgetMs = RUN_BUDGET_MS }) {
-  const deadline = Date.now() + budgetMs;
+function client({ fetch, token, repo, callTimeoutMs = CALL_TIMEOUT_MS, budgetMs = RUN_BUDGET_MS, deadline = Date.now() + budgetMs }) {
 
   async function call(step, method, path, body) {
     const timeLeft = Math.min(callTimeoutMs, deadline - Date.now());
@@ -90,7 +97,7 @@ function client({ fetch, token, repo, callTimeoutMs = CALL_TIMEOUT_MS, budgetMs 
     return result;
   }
 
-  return { call, expect, fail };
+  return { call, expect, fail, repo, deadline };
 }
 
 function owner(repo) {
@@ -107,8 +114,8 @@ function prSummary(pr) {
  * which GitHub knows at once (a double click); then by the id line in its body, which still finds
  * a PR that was closed and had its branch deleted, so a rejected item never comes back.
  */
-async function findPr(gh, repo, item) {
-  const head = encodeURIComponent(`${owner(repo)}:${branchName(item)}`);
+async function findPr(gh, repo, item, headOwner = owner(repo)) {
+  const head = encodeURIComponent(`${headOwner}:${branchName(item)}`);
   const byBranch = await gh.expect('looking for an existing PR', [200], 'GET', `/pulls?head=${head}&state=all&per_page=1`);
   if (Array.isArray(byBranch.data) && byBranch.data[0]) return prSummary(byBranch.data[0]);
 
@@ -118,6 +125,14 @@ async function findPr(gh, repo, item) {
   // Search matches loosely; only a PR whose body has this exact id line counts.
   const found = items.find(pr => pr.pull_request && typeof pr.body === 'string' && pr.body.includes(idLine(item)));
   return found ? prSummary(found) : null;
+}
+
+/**
+ * Brings the fork's master level with the site's, so the visitor branch starts from what's live.
+ * 409 means the fork's master has commits of its own (it never should): that's an error to fix by hand.
+ */
+async function syncFork(gh) {
+  await gh.expect('syncing the fork', [200], 'POST', '/merge-upstream', { branch: BASE_BRANCH });
 }
 
 async function ensureBranch(gh, item) {
@@ -166,27 +181,35 @@ async function labelPr(gh, number) {
  */
 async function publish(options, item) {
   const gh = client(options);
-  const { repo } = options;
-  const found = await findPr(gh, repo, item);
+  const { repo, fork } = options;
+  // Where the branch lives: the bot's fork, or the site's repo itself. Both share one time budget.
+  const branchGh = fork ? client({ ...options, repo: fork, deadline: gh.deadline }) : gh;
+  const headOwner = owner(branchGh.repo);
+
+  const found = await findPr(gh, repo, item, headOwner);
   if (found) return { pr: found, existed: true };
 
-  await ensureBranch(gh, item);
-  await ensureFile(gh, item);
+  if (fork) await syncFork(branchGh);
+  await ensureBranch(branchGh, item);
+  await ensureFile(branchGh, item);
 
   const opened = await gh.call('opening the PR', 'POST', '/pulls', {
     title: prTitle(item),
-    head: branchName(item),
+    head: fork ? `${headOwner}:${branchName(item)}` : branchName(item),
     base: BASE_BRANCH,
-    body: prBody(item, repo),
+    body: prBody(item, repo, branchGh.repo),
+    // So Morgan can write a mailbag answer on the fork's branch from the PR.
+    ...(fork ? { maintainer_can_modify: true } : {}),
   });
   if (opened.status === 201 && opened.data) {
     const pr = prSummary(opened.data);
-    await labelPr(gh, pr.number);
+    // A bot with no access to the site's repo can't label there; its PRs go unlabelled.
+    if (!fork) await labelPr(gh, pr.number);
     return { pr, existed: false };
   }
   // 422: one was opened a moment ago (a double click); return that one.
   if (opened.status === 422) {
-    const raced = await findPr(gh, repo, item);
+    const raced = await findPr(gh, repo, item, headOwner);
     if (raced) return { pr: raced, existed: true };
   }
   throw gh.fail('opening the PR', opened);
@@ -194,7 +217,7 @@ async function publish(options, item) {
 
 /** Looks for an existing PR only (for the confirm page). */
 async function existingPr(options, item) {
-  return findPr(client(options), options.repo, item);
+  return findPr(client(options), options.repo, item, owner(options.fork || options.repo));
 }
 
 module.exports = { publish, existingPr, GitHubError, BASE_BRANCH, LABEL, CALL_TIMEOUT_MS };

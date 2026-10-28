@@ -10,6 +10,7 @@ const { publish, existingPr, GitHubError } = require('./github');
 const { confirmPage, usedPage, openedPage, errorPage } = require('./pages');
 
 const DEFAULT_REPO = 'morgan-vanv/morganvanv.com';
+const REPO_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 /** An environment value, or '' when unset (or left as an unfilled `${…}` template). */
 function setting(env, name) {
@@ -40,8 +41,9 @@ function githubErrorPage(error) {
   }
   if (error.status === 403 || error.status === 404) {
     return errorPage(502, 'GitHub said no',
-      `GitHub refused ${error.step} (${error.status}). Check that GITHUB_REPO is right and that the token covers that `
-      + 'repository with Contents and Pull requests read/write (README).');
+      `GitHub refused ${error.step} (${error.status}). Check GITHUB_REPO and GITHUB_FORK, and that the token can `
+      + 'write to the fork (a classic public_repo token from the bot account), or, without a fork, covers GITHUB_REPO '
+      + 'with Contents and Pull requests read/write (README).');
   }
   const detail = error.detail ? ` GitHub said: "${error.detail}"` : '';
   return errorPage(502, 'GitHub had a problem',
@@ -67,9 +69,14 @@ async function handle(args, { fetch, env, now = new Date(), callTimeoutMs, budge
   const token = setting(env, 'GITHUB_TOKEN');
   const repo = setting(env, 'GITHUB_REPO') || DEFAULT_REPO;
   if (!token) return errorPage(503, 'Publishing is off', 'GITHUB_TOKEN isn\'t set (README). The suggestion is still in Discord.');
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return errorPage(503, 'Publishing is misconfigured', 'GITHUB_REPO should look like owner/repo.');
+  if (!REPO_NAME.test(repo)) return errorPage(503, 'Publishing is misconfigured', 'GITHUB_REPO should look like owner/repo.');
+  // The bot's fork (README, "Publishing from a bot's fork"); off means the branch goes on GITHUB_REPO itself.
+  const fork = setting(env, 'GITHUB_FORK') || null;
+  if (fork && (!REPO_NAME.test(fork) || fork.split('/')[0].toLowerCase() === repo.split('/')[0].toLowerCase())) {
+    return errorPage(503, 'Publishing is misconfigured', 'GITHUB_FORK should be the bot\'s fork, bot-account/repo, owned by a different account from GITHUB_REPO.');
+  }
 
-  const github = { fetch, token, repo, callTimeoutMs, budgetMs };
+  const github = { fetch, token, repo, fork, callTimeoutMs, budgetMs };
   try {
     if (method !== 'post') {
       const pr = await existingPr(github, item);
