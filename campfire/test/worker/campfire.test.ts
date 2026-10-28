@@ -108,6 +108,30 @@ describe('the campfire Worker', () => {
     expect((await log()).shouts.some(s => s.id === said.id)).toBe(false);
   });
 
+  it('lets the host clear the last stretch of guest shouts in one go, keeping the host\'s own', async () => {
+    const key = 'test-host-key-0123456789abcdef-0123';
+    const before = (await log()).shouts.length;
+    for (const [i, ip] of ['198.51.100.21', '198.51.100.22', '198.51.100.23'].entries()) {
+      expect((await shout({ nick: `flood${i}`, text: `spam ${i}` }, ip)).status).toBe(201);
+    }
+    expect((await shout({ text: 'still here' }, '198.51.100.24', key)).status).toBe(201);
+
+    expect((await call('/shouts?within=60', { method: 'DELETE' })).status).toBe(401);
+    expect((await call('/shouts?within=60', { method: 'DELETE', key: 'wrong' })).status).toBe(401);
+    for (const bad of ['', '?within=0', '?within=1441', '?within=abc', '?within=-5', '?within=1e3']) {
+      expect((await call(`/shouts${bad}`, { method: 'DELETE', key })).status, bad).toBe(400);
+    }
+
+    const cleared = await call('/shouts?within=60', { method: 'DELETE', key });
+    expect(cleared.status).toBe(200);
+    const { removed } = (await cleared.json()) as { removed: number };
+    expect(removed).toBeGreaterThanOrEqual(3);
+    const after = (await log()).shouts;
+    expect(after.some(s => s.nick.startsWith('flood'))).toBe(false);
+    expect(after.some(s => s.host && s.text === 'still here')).toBe(true);
+    expect(after.length).toBeLessThanOrEqual(before + 1);
+  });
+
   it('says whether a host key is the right one', async () => {
     expect((await call('/host', { key: 'test-host-key-0123456789abcdef-0123' })).status).toBe(204);
     expect((await call('/host', { key: 'wrong' })).status).toBe(401);

@@ -31,12 +31,13 @@ Responses are JSON (`Cache-Control: no-store`), except the empty `204`s. Errors 
 
 | Method & path | What it does | Response |
 | --- | --- | --- |
-| `GET /` | Name and version. | `200 { "name": "campfire", "version": "1.1.0", "source": "…", "endpoints": [ … ] }` |
+| `GET /` | Name and version. | `200 { "name": "campfire", "version": "1.2.0", "source": "…", "endpoints": [ … ] }` |
 | `GET /visit` | Reads the count. | `200 { "count": 1234 }` |
 | `POST /visit` | Adds one (at most once per IP per 30 min) and reads it. No body. | `200 { "count": 1235 }` |
 | `GET /shouts?client=<id>` | The newest 50 shouts still burning (from the last 30 days, plus always the newest 20), oldest first; how many visitors are watching; whether guests can shout. | `200 { "shouts": [Shout], "here": 3, "open": true }` |
 | `POST /shouts` | Says something. Body: `{ "nick", "text", "website" }`. | `201 { "shout": Shout }`; `423` while the fire is banked (guests only) |
 | `DELETE /shouts/<id>` | Host only: takes a shout down. | `204`, or `404` if it's already gone |
+| `DELETE /shouts?within=<minutes>` | Host only: takes down every guest shout from the last 1–1440 minutes, for cleaning up after a flood in one go. The host's own lines stay. | `200 { "removed": 12 }`; `400` without a valid `within` |
 | `GET /fire` | Is the fire open (can guests shout)? | `200 { "open": true }` |
 | `PUT /fire` | Host only: bank the fire (`{ "open": false }`) or open it (`{ "open": true }`). Nothing is deleted. | `200 { "open": false }`; `400` without a boolean; `401` without the host key; `404` with host features off |
 | `GET /host` | Is the bearer token the host key? The site asks before keeping a key. | `204` yes, `401` no, `404` with host features off |
@@ -198,7 +199,7 @@ and stays green.
    The first deploy creates the Worker and its Durable Object and uploads the host key (and the
    webhook, if set) as Worker secrets.
 8. **Check it**: open `https://campfire.<subdomain>.workers.dev/`. It should answer
-   `{"name":"campfire","version":"1.1.0",…}`. A brand-new workers.dev name can take a minute or two to
+   `{"name":"campfire","version":"1.2.0",…}`. A brand-new workers.dev name can take a minute or two to
    start resolving. Then `…/visit` should say `{"count":0}`.
 9. **Become the host on the site**: visit `https://morganvanv.com/social/#host=<your key>` once, in each
    browser you use. The key moves into that browser's localStorage and out of the address bar;
