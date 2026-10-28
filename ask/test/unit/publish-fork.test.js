@@ -9,7 +9,7 @@ const { handle } = require('../../src/publish');
 
 const SECRET = 'a'.repeat(64);
 const BOT_TOKEN = 'ghp_BOTTOKEN';
-const PUBLISH_URL = 'https://faas-nyc1-x.doserverless.co/api/v1/web/fn-x/ask/publish';
+const PUBLISH_URL = 'https://ask.example.workers.dev/publish';
 const REPO = 'morgan-vanv/morganvanv.com';
 const FORK = 'vanv-bot/morganvanv.com';
 const now = new Date('2026-10-27T05:00:00Z');

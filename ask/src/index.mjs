@@ -5,7 +5,7 @@
 //   GET|HEAD|POST /publish a signed "Publish as PR" link from that Discord → a PR on the site (publish.js)
 //
 // The handlers take `args` (the request's fields plus `http: { method }`) and return
-// `{ statusCode, headers, body }`, the shape they had as DigitalOcean web actions.
+// `{ statusCode, headers, body }`, so they run (and are tested) without the Workers runtime.
 import publishModule from './publish.js';
 import submitModule from './submit.js';
 
@@ -89,7 +89,7 @@ async function readBody(request) {
 function fieldsOf(record) {
   const fields = {};
   for (const [key, value] of Object.entries(record)) {
-    if (key !== 'http' && key !== '__ow_method' && key !== '__proto__') fields[key] = value;
+    if (key !== 'http' && key !== '__proto__') fields[key] = value;
   }
   return fields;
 }

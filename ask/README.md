@@ -10,8 +10,7 @@ The site's Contact form, its "name a star" panel and "Publish as PR", as one Clo
 | `GET /` | Name and version. |
 
 `src/index.mjs` is the only Workers-specific file: routing, CORS, body limits and rate limits. The handlers take
-the request's fields and return `{ statusCode, headers, body }` (the shape they had as DigitalOcean functions,
-before 2.0), so they're tested in plain Node.
+the request's fields and return `{ statusCode, headers, body }`, so they're tested in plain Node.
 
 ```bash
 npm ci --ignore-scripts
@@ -23,34 +22,33 @@ npm run build     # wrangler deploy --dry-run
 ## Setting it up (Morgan's checklist)
 
 The campfire's Cloudflare account, token and `production` environment do for this too (campfire/README.md).
+This is how it's set up today; use it to rebuild or rotate.
 
-1. **Add the secrets** to the `production` environment (Settings → Environments → production → Add
-   environment secret). Names differ from the Worker's so they can't collide with the campfire's:
-   - `ASK_DISCORD_WEBHOOK_URL`: the Ask Morgan channel's webhook (the `DISCORD_WEBHOOK_URL` from your old
-     DigitalOcean `.env`). Required: without it the deploy is skipped.
-   - `PUBLISH_SECRET`: the same value as in that `.env`, so links already in Discord keep working (below).
-     Without it, no "Publish as PR" links.
-   - `PUBLISH_GITHUB_TOKEN`: the publishing token (`GITHUB_TOKEN` in that `.env`; better, the bot's, see
-     "Publishing from a bot's fork"). Without it, the links show "Publishing is off".
+1. **Secrets** in the `production` environment (Settings → Environments → production). The names differ from
+   the Worker's so they can't collide with the campfire's:
+   - `ASK_DISCORD_WEBHOOK_URL`: the Ask Morgan channel's webhook, the whole `https://discord.com/api/webhooks/…`
+     URL. Required: without it the deploy is skipped. If Discord answers 404 (the Worker's logs say
+     "Discord responded with status 404"), the URL is wrong or the webhook was deleted.
+   - `PUBLISH_SECRET`: `openssl rand -hex 32` (at least 32 characters, or links are left off). Changing it
+     invalidates every link already in Discord. Without it, no "Publish as PR" links.
+   - `PUBLISH_GITHUB_TOKEN`: the publishing token (better, the bot's: see "Publishing from a bot's fork").
+     Without it, the links show "Publishing is off".
 2. **Deploy:** merge anything under `ask/`, or **Actions → Ask Morgan → Run workflow** on `main`. The deploy
-   uploads the three as the Worker secrets `DISCORD_WEBHOOK_URL`, `PUBLISH_SECRET` and `GITHUB_TOKEN`.
-3. **Check it:** `https://ask.morganvanv.workers.dev/` answers `{"name":"ask","version":"2.0.0",…}` and
-   `/publish` shows "No link here". (A brand-new workers.dev name can take a minute.)
-4. **Point the site at it:** the site's `askMorganSubmitUrl` (`src/shared/config/site.config.ts`) becomes
-   `https://ask.morganvanv.workers.dev/submit`.
-5. **Try it:** suggest a subtitle on the site. The Discord message should show **Will publish** and a
-   **Publish as PR** link to `ask.morganvanv.workers.dev/publish`; open it, press the button, and you should
-   land on a new PR. This test PR stays public even after you close it, so use text you don't mind. Close it,
-   delete its branch, and open the same link again: it should say **Already published (closed)**.
-6. **Retire DigitalOcean** (below).
+   uploads the three as the Worker secrets `DISCORD_WEBHOOK_URL`, `PUBLISH_SECRET` and `GITHUB_TOKEN`, then
+   checks that `/publish` answers 400 ("No link here"; a warning means `PUBLISH_SECRET` didn't take).
+3. **Check it:** `https://ask.morganvanv.workers.dev/` answers `{"name":"ask","version":"2.0.0",…}`. The site's
+   `askMorganSubmitUrl` (`src/shared/config/site.config.ts`) is `https://ask.morganvanv.workers.dev/submit`.
+4. **Try it:** suggest a subtitle on the site. The Discord message should show **Will publish** and a
+   **Publish as PR** link; open it, press the button, and you should land on a new PR. This test PR stays
+   public even after you close it, so use text you don't mind. Close it, delete its branch, and open the
+   same link again: it should say **Already published (closed)**.
 
-### Leaving DigitalOcean
+Errors are in Cloudflare → Workers & Pages → ask → Observability (only our own `console.error` lines; nothing
+about visitors is logged).
 
-Links already in Discord point at the old `…/ask/publish` URL. With the same `PUBLISH_SECRET`, each still
-works here: keep everything from `?p=` on and put `https://ask.morganvanv.workers.dev/publish` in front. Then
-delete the `ask` namespace's functions in DigitalOcean (`doctl serverless undeploy ask/submit ask/publish`, or
-the Functions page), delete your local `.env` (it holds the token and the secret), and revoke the token it held
-if the Worker uses a different one.
+**Links from before 2.0** (Ask Morgan ran on DigitalOcean until 2026-10-28) point at a `…doserverless.co/…/ask/publish`
+address that no longer answers. They're signed with the same secret, so keep everything from `?p=` on and put
+`https://ask.morganvanv.workers.dev/publish` in front. They expire 30 days after they were sent.
 
 ## Publish as PR
 

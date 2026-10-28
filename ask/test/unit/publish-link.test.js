@@ -7,7 +7,7 @@ const {
 } = require('../../src/publish-link');
 
 const SECRET = 'a'.repeat(64);
-const PUBLISH_URL = 'https://faas-nyc1-x.doserverless.co/api/v1/web/fn-x/ask/publish';
+const PUBLISH_URL = 'https://ask.example.workers.dev/publish';
 const now = new Date('2026-10-27T05:00:00Z');
 const hex = () => '3f2a9c1b';
 
@@ -204,10 +204,10 @@ test('the signature covers a version prefix, so a bare HMAC of p is not a signat
   assert.equal(sign(p, SECRET), crypto.createHmac('sha256', SECRET).update(`publish-link/v1\n${p}`).digest('base64url'));
 });
 
-test('methodOf reads http.method when http is sent, else __ow_method, lowercased', () => {
+test('methodOf reads http.method, lowercased, and nothing else', () => {
   assert.equal(methodOf({ http: { method: 'POST' } }), 'post');
-  assert.equal(methodOf({ __ow_method: 'get' }), 'get');
-  // A non-object `http` (say, a query parameter) says nothing, and never falls back to __ow_method.
+  assert.equal(methodOf({ __ow_method: 'get' }), '');
+  // A non-object `http` (say, a query parameter) says nothing.
   assert.equal(methodOf({ http: 'POST', __ow_method: 'get' }), '');
   assert.equal(methodOf({ http: '1', __ow_method: 'post' }), '');
   assert.equal(methodOf({ http: ['POST'] }), '');
