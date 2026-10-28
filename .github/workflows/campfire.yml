@@ -69,6 +69,8 @@ jobs:
     steps:
       - name: Check for Cloudflare secrets
         if: env.HAS_CLOUDFLARE != 'true'
+        # Before checkout there's no ask/ or campfire/ folder for the default working-directory.
+        working-directory: .
         run: |
           msg="Skipping deploy: add the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets to the production environment, then run this workflow again (campfire/README.md, 'Setting it up')."
           echo "::notice title=Campfire not deployed::$msg"
