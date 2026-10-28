@@ -2,7 +2,7 @@
 
 export const NAME = 'campfire';
 /** Kept in step with package.json (a test checks). */
-export const VERSION = '1.1.0';
+export const VERSION = '1.2.0';
 export const SOURCE_URL = 'https://github.com/morgan-vanv/morganvanv.com-backend/tree/main/campfire';
 
 /** The one Durable Object instance everything lives in. */

@@ -178,6 +178,16 @@ export class Campfire extends DurableObject<Env> {
     return cursor.rowsWritten > 0;
   }
 
+  /**
+   * The host clears up after a flood: every guest shout from the last `withinMs`, in one go. The host's own
+   * lines stay. Returns how many went.
+   */
+  clearGuests(withinMs: number, now = Date.now()): number {
+    const cursor = this.sql.exec('DELETE FROM shouts WHERE host = 0 AND at >= ?', now - withinMs);
+    this.tally(cursor);
+    return cursor.rowsWritten;
+  }
+
   /** Whether guests may shout. Open unless the host has banked the fire. */
   isOpen(): boolean {
     this.openCache ??= this.run<{ value: number }>(`SELECT value FROM counters WHERE name = 'banked'`).length === 0;

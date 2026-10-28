@@ -18,7 +18,7 @@ const campfire = (env: Env) => env.CAMPFIRE.getByName(INSTANCE_NAME);
 const clientIp = (request: Request): string | null => request.headers.get('CF-Connecting-IP');
 
 const info: Handler = async (_request, _env, _url, origin) =>
-  json({ name: NAME, version: VERSION, source: SOURCE_URL, endpoints: ['GET|POST /visit', 'GET|POST /shouts', 'DELETE /shouts/:id', 'GET|PUT /fire', 'GET /host'] }, 200, origin);
+  json({ name: NAME, version: VERSION, source: SOURCE_URL, endpoints: ['GET|POST /visit', 'GET|POST /shouts', 'DELETE /shouts?within=<minutes>', 'DELETE /shouts/:id', 'GET|PUT /fire', 'GET /host'] }, 200, origin);
 
 const getVisits: Handler = async (_request, env, _url, origin) =>
   json({ count: await campfire(env).visit(false) }, 200, origin);
@@ -73,6 +73,25 @@ const setFire: Handler = async (request, env, _url, origin) => {
   return json({ open: await campfire(env).setOpen(open) }, 200, origin);
 };
 
+/** The longest stretch one clear-up reaches back: a day. */
+const MAX_CLEAR_MINUTES = 24 * 60;
+
+/**
+ * Host only: takes down every guest shout from the last `?within=<minutes>` (1 to 1440), for cleaning up
+ * after a flood in one go. The host's own lines stay. Answers `{ "removed": n }`.
+ */
+const clearShouts: Handler = async (request, env, url, origin) => {
+  const who = await checkHost(request.headers.get('Authorization'), env.CAMPFIRE_HOST_KEY);
+  if (who === 'host-off') return failure(404, 'Nothing here.', origin);
+  if (who !== 'host') return failure(401, 'Only the host can do that.', origin);
+  const raw = url.searchParams.get('within') ?? '';
+  const minutes = /^\d{1,4}$/.test(raw) ? Number(raw) : NaN;
+  if (!(minutes >= 1 && minutes <= MAX_CLEAR_MINUTES)) {
+    return failure(400, `Say how far back to clear: ?within=<minutes>, 1 to ${MAX_CLEAR_MINUTES}.`, origin);
+  }
+  return json({ removed: await campfire(env).clearGuests(minutes * 60_000) }, 200, origin);
+};
+
 const removeShout = (rawId: string): Handler => async (request, env, _url, origin) => {
   const who = await checkHost(request.headers.get('Authorization'), env.CAMPFIRE_HOST_KEY);
   if (who === 'host-off') return failure(404, 'Nothing here.', origin);
@@ -99,7 +118,7 @@ function route(method: string, path: string): Route {
   const table: Record<string, Partial<Record<string, Handler>>> = {
     '/': { GET: info },
     '/visit': { GET: getVisits, POST: addVisit },
-    '/shouts': { GET: getShouts, POST: addShout },
+    '/shouts': { GET: getShouts, POST: addShout, DELETE: clearShouts },
     '/fire': { GET: getFire, PUT: setFire },
     '/host': { GET: checkHostKey },
   };
