@@ -1,6 +1,6 @@
 {
   "name": "ask",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "Ask Morgan: forwards morganvanv.com's Contact form to Discord and turns approved suggestions into PRs. One Cloudflare Worker.",
   "engines": {

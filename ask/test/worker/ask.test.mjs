@@ -6,7 +6,7 @@ import packageJson from '../../package.json';
 import { VERSION } from '../../src/index.mjs';
 import publishLink from '../../src/publish-link.js';
 
-// The whole Worker in workerd. DISCORD_WEBHOOK_URL and GITHUB_TOKEN are "off" here (vitest.config.mjs),
+// The whole Worker in workerd. DISCORD_WEBHOOK_URL is "off" here (vitest.config.mjs),
 // so nothing ever leaves: these check the routing, CORS, limits and that the Node APIs the links need work.
 const SITE = 'https://morganvanv.com';
 const worker = exports.default;
@@ -76,7 +76,7 @@ describe('the ask Worker', () => {
     expect((await submit({ question: '' }, { ip: '198.51.100.10' })).status).toBe(400);
   });
 
-  it('serves the publish pages: no link, a forged link, and a real one (with publishing off)', async () => {
+  it('serves the publish pages: no link, a forged link, and a real one (on to GitHub\'s editor)', async () => {
     const empty = await call('/publish', { origin: null });
     expect(empty.status).toBe(400);
     expect(empty.headers.get('Content-Security-Policy')).toContain("default-src 'none'");
@@ -86,13 +86,13 @@ describe('the ask Worker', () => {
 
     const item = publishLink.makeItem({ kind: 'subtitle', question: '✨ …', subtitle: 'a certified night owl', credit: 'sam' }, new Date(), () => 'abcdef12');
     const link = new URL(publishLink.publishLink(item, 'https://ask.test/publish', SECRET));
-    const page = await call(`/publish${link.search}`, { origin: null });
-    // The signature checks out in workerd; GITHUB_TOKEN is off, so it stops there.
-    expect(page.status).toBe(503);
-    expect(await page.text()).toContain('GITHUB_TOKEN');
-    const form = new URLSearchParams({ p: link.searchParams.get('p'), s: link.searchParams.get('s') });
-    const posted = await call('/publish', { method: 'POST', body: form, origin: null });
-    expect(posted.status).toBe(503);
-    expect((await call('/publish', { method: 'DELETE', origin: null })).status).toBe(405);
+    const page = await call(`/publish${link.search}`, { origin: null, redirect: 'manual' });
+    // The signature checks out in workerd, so it's off to the editor.
+    expect(page.status).toBe(303);
+    const editor = new URL(page.headers.get('Location'));
+    expect(editor.origin + editor.pathname).toBe('https://github.com/morgan-vanv/morganvanv.com/new/master');
+    expect(editor.searchParams.get('filename')).toBe(publishLink.filePath(item));
+    expect(editor.searchParams.get('value')).toBe(publishLink.fileContent(item));
+    expect((await call(`/publish${link.search}`, { method: 'POST', origin: null })).status).toBe(405);
   });
 });

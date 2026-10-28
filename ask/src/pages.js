@@ -1,4 +1,4 @@
-// The publish function's pages: small, plain and dark, no scripts. Every interpolated value is escaped.
+// /publish's pages: small, plain and dark, no scripts. Every interpolated value is escaped.
 
 const crypto = require('node:crypto');
 
@@ -13,17 +13,15 @@ const STYLE = [
   'code{color:#f0c674;overflow-wrap:anywhere}',
   'pre{background:#141a28;border:1px solid #2a3142;border-radius:6px;padding:1rem;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere}',
   'a{color:#8ab4f8}',
-  'button{font:inherit;min-height:44px;padding:.6rem 1.2rem;background:#c9922a;color:#0b0f1a;border:0;border-radius:6px;cursor:pointer}',
-  'button:hover,button:focus-visible{background:#f0c674;outline:2px solid #f0c674;outline-offset:2px}',
-].join('');
+    ].join('');
 
 const STYLE_HASH = crypto.createHash('sha256').update(STYLE).digest('base64');
 
-// No scripts, no images, nothing framed; the form may only post here (and follow the redirect to the PR).
+// No scripts, no images, no forms, nothing framed.
 const CSP = [
   "default-src 'none'",
   `style-src 'sha256-${STYLE_HASH}'`,
-  "form-action 'self' https://github.com",
+  "form-action 'none'",
   "base-uri 'none'",
   "frame-ancestors 'none'",
 ].join('; ');
@@ -46,11 +44,6 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-/** Only ever link to a GitHub page. */
-function githubUrl(url) {
-  return typeof url === 'string' && url.startsWith('https://github.com/') ? url : null;
 }
 
 function page(statusCode, title, inner, extraHeaders = {}) {
@@ -77,50 +70,19 @@ ${inner}
 
 const KIND_NAMES = { subtitle: 'a greeting subtitle', star: 'a star name', question: 'a mailbag question' };
 
-function prLink(pr) {
-  const url = githubUrl(pr.url);
-  const label = `PR #${escapeHtml(pr.number)}`;
-  return url ? `<a href="${escapeHtml(url)}">${label}</a>` : label;
-}
-
-/** GET: what will be published, where, and the one button that does it. */
-function confirmPage(item, { title, path, content }, p, s, expires) {
-  return page(200, `Publish ${KIND_NAMES[item.kind]}?`, `
-<p>This opens a pull request on the site's repo adding one file. Nothing goes live on the site until you merge it.</p>
-<p class="dim">PR: <code>${escapeHtml(title)}</code><br>File: <code>${escapeHtml(path)}</code></p>
-<pre>${escapeHtml(content)}</pre>
-<form method="post">
-<input type="hidden" name="p" value="${escapeHtml(p)}">
-<input type="hidden" name="s" value="${escapeHtml(s)}">
-<button type="submit">Open the pull request</button>
-<p class="warn">Opening the PR makes this text public on GitHub, even if you close it later.</p>
-</form>
-<p class="dim">This link works until ${escapeHtml(expires.toISOString().slice(0, 10))}.</p>`);
-}
-
-const STATES = { open: 'open', closed: 'closed', merged: 'merged' };
-
-function alreadyTitle(pr) {
-  return `Already published (${STATES[pr.state] || 'unknown'})`;
-}
-
-/** GET for a link that has already been used. */
-function usedPage(pr) {
-  return page(200, alreadyTitle(pr), `
-<p>This link already opened ${prLink(pr)}, which is ${escapeHtml(STATES[pr.state] || 'in an unknown state')}.</p>`);
-}
-
-/** POST succeeded: straight to the PR. The body is for anything that doesn't follow redirects. */
-function openedPage(pr, existed) {
-  const url = githubUrl(pr.url);
-  const title = existed ? alreadyTitle(pr) : 'Pull request opened';
-  const inner = `<p>${existed ? 'This link already opened' : 'Opened'} ${prLink(pr)}.</p>`;
-  if (!url) return page(200, title, inner);
-  return page(303, title, inner, { Location: url });
+/**
+ * A good link: straight on to GitHub's new-file editor (303), with a link in the body for anything that
+ * doesn't follow redirects. Opening it changes nothing; the file is only made when Morgan commits it there.
+ */
+function editorPage(item, editorUrl) {
+  const inner = `
+<p>Opening GitHub's editor with ${escapeHtml(KIND_NAMES[item.kind] || 'the file')} filled in.</p>
+<p><a href="${escapeHtml(editorUrl)}">Continue to GitHub</a></p>`;
+  return page(303, 'Publish on GitHub', inner, { Location: editorUrl });
 }
 
 function errorPage(statusCode, title, message) {
-  return page(statusCode, title, `\n<p>${escapeHtml(message)}</p>`, statusCode === 405 ? { Allow: 'GET, HEAD, POST' } : {});
+  return page(statusCode, title, `\n<p>${escapeHtml(message)}</p>`, statusCode === 405 ? { Allow: 'GET, HEAD' } : {});
 }
 
-module.exports = { escapeHtml, confirmPage, usedPage, openedPage, errorPage, CSP, HEADERS };
+module.exports = { escapeHtml, editorPage, errorPage, CSP, HEADERS };

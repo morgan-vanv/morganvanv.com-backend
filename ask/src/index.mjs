@@ -2,7 +2,7 @@
 // about Workers (so the same code runs under node --test):
 //
 //   POST /submit           the site's Contact form and "name a star" panel → Morgan's Discord (submit.js)
-//   GET|HEAD|POST /publish a signed "Publish as PR" link from that Discord → a PR on the site (publish.js)
+//   GET|HEAD /publish      a signed "Publish as PR" link from that Discord → GitHub's editor, filled in (publish.js)
 //
 // The handlers take `args` (the request's fields plus `http: { method }`) and return
 // `{ statusCode, headers, body }`, so they run (and are tested) without the Workers runtime.
@@ -14,7 +14,7 @@ const { handleSubmit } = submitModule;
 
 export const NAME = 'ask';
 /** Kept in step with package.json (a test checks). */
-export const VERSION = '2.0.0';
+export const VERSION = '2.1.0';
 export const SOURCE_URL = 'https://github.com/morgan-vanv/morganvanv.com-backend/tree/main/ask';
 
 /** Who may call /submit from a browser. Anything else gets no CORS headers (the same list as the campfire's). */
@@ -25,7 +25,7 @@ export const ALLOWED_ORIGINS = [
   'http://localhost:4000',
 ];
 
-/** Larger request bodies are refused with 413. A submission is at most a few kB; a link under 1 kB. */
+/** Larger request bodies are refused with 413. A submission is at most a few kB. */
 export const MAX_BODY_BYTES = 16 * 1024;
 
 function corsHeaders(origin, preflight = false) {
@@ -136,18 +136,9 @@ async function publish(request, env, url) {
   if (!(await allowed(env.PUBLISH_PER_VISITOR, clientIp(request)))) {
     return toResponse({ statusCode: 429, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '60' }, body: 'Too many requests. Try again in a minute.' }, {}, method);
   }
+  // The link is all in the query string; a body is never read.
   const fields = fieldsOf(Object.fromEntries(url.searchParams));
-  if (method === 'POST') {
-    let form;
-    try {
-      form = new URLSearchParams(await readBody(request));
-    } catch (error) {
-      if (error instanceof TooLarge) return toResponse({ statusCode: 413, headers: { 'Content-Type': 'text/plain; charset=utf-8' }, body: 'Too large.' });
-      throw error;
-    }
-    Object.assign(fields, fieldsOf(Object.fromEntries(form)));
-  }
-  const result = await handle({ ...fields, http: { method: method.toLowerCase() } }, { fetch, env, now: new Date() });
+  const result = handle({ ...fields, http: { method: method.toLowerCase() } }, { env, now: new Date() });
   return toResponse(result, {}, method);
 }
 
@@ -155,7 +146,7 @@ function info() {
   return toResponse({
     statusCode: 200,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-    body: { name: NAME, version: VERSION, source: SOURCE_URL, endpoints: ['POST /submit', 'GET|HEAD|POST /publish'] },
+    body: { name: NAME, version: VERSION, source: SOURCE_URL, endpoints: ['POST /submit', 'GET|HEAD /publish'] },
   });
 }
 

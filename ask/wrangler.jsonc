@@ -10,15 +10,15 @@
   "workers_dev": true,
   "preview_urls": false,
 
-  // Not secret; change them by PR. The secrets (DISCORD_WEBHOOK_URL, PUBLISH_SECRET, GITHUB_TOKEN) are
-  // uploaded by the deploy from the repo's `production` environment (README).
+  // Not secret; change them by PR. The secrets (DISCORD_WEBHOOK_URL, PUBLISH_SECRET) are uploaded by the
+  // deploy from the repo's `production` environment (README). No GitHub credential: a Publish link opens
+  // GitHub's own editor, and Morgan commits as himself.
   "vars": {
     // Where "Publish as PR" links point: this Worker's /publish. "off" means no links (the embed shows the
     // file to add by hand instead).
     "PUBLISH_URL": "https://ask.morganvanv.workers.dev/publish",
-    "GITHUB_REPO": "morgan-vanv/morganvanv.com",
-    // The bot's fork (README, "Publishing from a bot's fork"), or "off" to put branches on GITHUB_REPO.
-    "GITHUB_FORK": "off"
+    // Whose editor a Publish link opens.
+    "GITHUB_REPO": "morgan-vanv/morganvanv.com"
   },
 
   // Per Cloudflare location and approximate, which is plenty here. Periods can only be 10 or 60 s.

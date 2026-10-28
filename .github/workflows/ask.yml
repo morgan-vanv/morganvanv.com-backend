@@ -5,9 +5,9 @@
 #
 # Deploying needs, in the production environment: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (shared
 # with the campfire) and ASK_DISCORD_WEBHOOK_URL (where submissions go). Until all three exist the deploy is
-# skipped with a notice, so the workflow stays green. PUBLISH_SECRET and PUBLISH_GITHUB_TOKEN are optional:
-# with both, "Publish as PR" works (ask/README.md). Each becomes the Worker secret DISCORD_WEBHOOK_URL,
-# PUBLISH_SECRET or GITHUB_TOKEN.
+# skipped with a notice, so the workflow stays green. PUBLISH_SECRET is optional: with it, Discord messages
+# get "Publish as PR" links (ask/README.md). They become the Worker secrets DISCORD_WEBHOOK_URL and
+# PUBLISH_SECRET. No GitHub token: the Worker never writes to GitHub.
 name: Ask Morgan
 
 on:
@@ -64,7 +64,6 @@ jobs:
     env:
       READY: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' && secrets.ASK_DISCORD_WEBHOOK_URL != '' }}
       HAS_PUBLISH_SECRET: ${{ secrets.PUBLISH_SECRET != '' }}
-      HAS_GITHUB_TOKEN: ${{ secrets.PUBLISH_GITHUB_TOKEN != '' }}
     steps:
       - name: Check for secrets
         if: env.READY != 'true'
@@ -99,7 +98,6 @@ jobs:
             echo 'names<<EOF'
             echo DISCORD_WEBHOOK_URL
             if [ "$HAS_PUBLISH_SECRET" = 'true' ]; then echo PUBLISH_SECRET; fi
-            if [ "$HAS_GITHUB_TOKEN" = 'true' ]; then echo GITHUB_TOKEN; fi
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
@@ -116,7 +114,6 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.ASK_DISCORD_WEBHOOK_URL }}
           PUBLISH_SECRET: ${{ secrets.PUBLISH_SECRET }}
-          GITHUB_TOKEN: ${{ secrets.PUBLISH_GITHUB_TOKEN }}
 
       - name: Say hello
         if: env.READY == 'true' && steps.deploy.outputs.deployment-url != ''
