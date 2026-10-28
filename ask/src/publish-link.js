@@ -32,20 +32,12 @@ const MIN_SECRET_LENGTH = 32;
 const ID_PATTERN = /^(\d{4}-\d{2}-\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-[0-9a-f]{8}$/;
 const SIGNATURE_CONTEXT = 'publish-link/v1\n';
 
-/**
- * The request's HTTP method, lowercased, or '' when it wasn't given. The Worker (index.mjs) puts it in
- * `http.method`, as DigitalOcean's web actions did; `__ow_method` is the older OpenWhisk spelling.
- */
+/** The request's HTTP method, lowercased, or '' when it wasn't given. index.mjs puts it in `http.method`. */
 function methodOf(args) {
   if (!args || typeof args !== 'object') return '';
-  // When the platform sends `http`, it alone says the method: a request whose own parameters include
-  // something called `http` (not an object) mustn't fall through to an `__ow_method` it also sent.
-  if ('http' in args) {
-    const http = args.http;
-    const ok = typeof http === 'object' && http !== null && !Array.isArray(http);
-    return ok && typeof http.method === 'string' ? http.method.toLowerCase() : '';
-  }
-  return typeof args.__ow_method === 'string' ? args.__ow_method.toLowerCase() : '';
+  const http = args.http;
+  const ok = typeof http === 'object' && http !== null && !Array.isArray(http);
+  return ok && typeof http.method === 'string' ? http.method.toLowerCase() : '';
 }
 
 /**

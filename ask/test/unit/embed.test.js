@@ -6,7 +6,7 @@ const { readLink, makeItem, fileContent, ANSWER_MARKER } = require('../../src/pu
 
 const now = new Date('2026-10-27T05:00:00Z');
 
-const publish = { url: 'https://faas-nyc1-x.doserverless.co/api/v1/web/fn-x/ask/publish', secret: 's'.repeat(64) };
+const publish = { url: 'https://ask.example.workers.dev/publish', secret: 's'.repeat(64) };
 const hex = () => 'beefcafe';
 
 // Exactly what the site's form sends (contact-submission.ts, sky-naming.ts).
@@ -161,7 +161,7 @@ test('publishing is on only with an https PUBLISH_URL and a long enough PUBLISH_
   assert.equal(publishConfig({ PUBLISH_URL: publish.url, PUBLISH_SECRET: 'short' }), null);
   assert.equal(publishConfig({ PUBLISH_URL: 'http://insecure.example', PUBLISH_SECRET: publish.secret }), null);
   assert.equal(publishConfig({ PUBLISH_URL: '${PUBLISH_URL}', PUBLISH_SECRET: '${PUBLISH_SECRET}' }), null);
-  // doctl refuses empty values, so .env switches it off with "off".
+  // "off" in wrangler.jsonc switches it off.
   assert.equal(publishConfig({ PUBLISH_URL: 'off', PUBLISH_SECRET: publish.secret }), null);
   assert.equal(publishConfig({ PUBLISH_URL: publish.url, PUBLISH_SECRET: 'off' }), null);
   assert.deepEqual(publishConfig({ PUBLISH_URL: ` ${publish.url} `, PUBLISH_SECRET: publish.secret }), publish);

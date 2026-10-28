@@ -15,16 +15,14 @@ test('only a POST is a submission; OPTIONS is the CORS preflight', async () => {
   const { sent, fetch } = discord();
   const main = args => handleSubmit(args, { fetch, env });
   assert.equal((await main({ http: { method: 'OPTIONS' } })).statusCode, 204);
-  assert.equal((await main({ __ow_method: 'options' })).statusCode, 204);
-  for (const args of [{ http: { method: 'GET' } }, { __ow_method: 'get' }, {}, { http: 'POST' }]) {
+  for (const args of [{ http: { method: 'GET' } }, { __ow_method: 'post' }, {}, { http: 'POST' }]) {
     const response = await main({ ...args, question: 'hi' });
     assert.equal(response.statusCode, 405, JSON.stringify(args));
     assert.equal(response.headers.Allow, 'POST, OPTIONS');
   }
   assert.equal(sent.length, 0);
   assert.equal((await main({ http: { method: 'POST' }, question: 'hi' })).statusCode, 200);
-  assert.equal((await main({ __ow_method: 'post', question: 'hi' })).statusCode, 200);
-  assert.equal(sent.length, 2);
+  assert.equal(sent.length, 1);
   assert.equal(sent[0].url, env.DISCORD_WEBHOOK_URL);
 });
 

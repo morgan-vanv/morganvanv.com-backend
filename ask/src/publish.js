@@ -12,11 +12,10 @@ const { confirmPage, usedPage, openedPage, errorPage } = require('./pages');
 const DEFAULT_REPO = 'morgan-vanv/morganvanv.com';
 const REPO_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
-/** An environment value, or '' when unset (or left as an unfilled `${…}` template). */
+/** An environment value, or '' when unset, "off", or an unfilled `${…}` placeholder. */
 function setting(env, name) {
   const value = typeof env[name] === 'string' ? env[name].trim() : '';
-  // "off" switches a setting off (a wrangler.jsonc var can't be removed by an empty secret, and doctl
-  // refused empty values, so "off" has always been the way).
+  // "off" switches a wrangler.jsonc var off without removing it.
   return value.startsWith('${') || value.toLowerCase() === 'off' ? '' : value;
 }
 

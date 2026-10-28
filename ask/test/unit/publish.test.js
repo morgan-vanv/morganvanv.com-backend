@@ -8,7 +8,7 @@ const { handle } = require('../../src/publish');
 
 const SECRET = 'a'.repeat(64);
 const TOKEN = 'github_pat_SECRETTOKEN';
-const PUBLISH_URL = 'https://faas-nyc1-x.doserverless.co/api/v1/web/fn-x/ask/publish';
+const PUBLISH_URL = 'https://ask.example.workers.dev/publish';
 const REPO = 'morgan-vanv/morganvanv.com';
 const now = new Date('2026-10-27T05:00:00Z');
 const hex = () => '3f2a9c1b';
@@ -258,14 +258,6 @@ test('GET on a link already used says so and links the PR', async () => {
   assert.match(page.body, /<a href="https:\/\/github\.com\/morgan-vanv\/morganvanv\.com\/pull\/40">PR #40<\/a>, which is open/);
 });
 
-test('the legacy __ow_method works too', async () => {
-  const github = fakeGitHub();
-  const { http, ...args } = linkArgs(subtitle);
-  assert.ok(http);
-  const page = await handle({ ...args, __ow_method: 'get' }, { fetch: github.fetch, env, now });
-  assert.match(page.body, /Open the pull request/);
-});
-
 // POST
 
 test('POST opens the PR: branch from master, one new file, the PR, the label', async () => {
@@ -475,7 +467,7 @@ test('a GitHub call that hangs times out with a friendly page', async () => {
   assert.match(result.body, /GitHub didn&#39;t answer in time \(creating the branch\)/);
 });
 
-test('the whole run has a budget, so it ends before DigitalOcean\'s timeout', async () => {
+test('the whole run has a budget, so a slow GitHub still gets a page back', async () => {
   const slow = fakeGitHub();
   const fetch = (url, init) => new Promise(resolve => setTimeout(() => resolve(slow.fetch(url, init)), 15));
   const { result } = await quietly(() => handle(linkArgs(subtitle, 'POST'), { fetch, env, now, budgetMs: 40 }));
