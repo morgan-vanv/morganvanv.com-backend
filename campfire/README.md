@@ -137,7 +137,7 @@ works from anywhere, which is why the limits above live on the server.)
 cd campfire
 nvm use                       # Node 24
 npm ci
-cp .dev.vars.example .dev.vars    # host key for local dev: local-host-key
+cp .dev.vars.example .dev.vars    # host key for local dev: local-host-key-for-dev-only-0123456789
 npm run dev
 ```
 

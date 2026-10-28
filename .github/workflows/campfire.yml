@@ -37,6 +37,7 @@ jobs:
   test:
     name: Campfire tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,7 +47,9 @@ jobs:
           node-version-file: campfire/.nvmrc
           cache: npm
           cache-dependency-path: campfire/package-lock.json
-      - run: npm ci
+      # No dependency install scripts: the tests, the typecheck and the build don't need them (esbuild
+      # and workerd ship their binaries as packages), and the deploy job holds a Cloudflare token.
+      - run: npm ci --ignore-scripts
       - run: npm run typecheck
       - run: npm test
       - name: Build (dry run)
@@ -83,7 +86,7 @@ jobs:
           node-version-file: campfire/.nvmrc
           # No npm cache in the job that holds the token: a poisoned cache entry could change what deploys.
           package-manager-cache: false
-      - run: npm ci
+      - run: npm ci --ignore-scripts
         if: env.HAS_CLOUDFLARE == 'true'
 
       # Only the optional secrets that exist are uploaded (an empty one would fail the upload).

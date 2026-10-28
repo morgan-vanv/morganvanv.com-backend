@@ -1,4 +1,5 @@
-# Weekly, grouped update PRs: the workflow's pinned actions, the campfire's and Ask Morgan's npm packages.
+# Weekly, grouped update PRs: the workflows' pinned actions and the campfire's npm packages. (Ask Morgan's
+# functions have no npm dependencies, so there's nothing there to watch.)
 # Each waits a week after a release (security updates don't), so a hijacked version is usually gone first.
 version: 2
 updates:
@@ -24,10 +25,3 @@ updates:
         patterns: ['wrangler', '@cloudflare/*']
       dev-tools:
         patterns: ['*']
-
-  - package-ecosystem: npm
-    directory: /packages/ask/submit
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 7
