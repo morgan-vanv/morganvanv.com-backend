@@ -118,7 +118,7 @@ test('bad links, expired links and publishing off each get their own page', () =
 test('HTML is escaped everywhere', () => {
   assert.equal(escapeHtml('<a href="x">\'&\'</a>'), '&lt;a href=&quot;x&quot;&gt;&#39;&amp;&#39;&lt;/a&gt;');
   const page = editorPage(subtitle, 'https://github.com/x/y/new/master?value="><script>alert(1)</script>');
-  assert.doesNotMatch(page.body, /<script>/);
+  assert.doesNotMatch(page.body, /<script/i);
   assert.match(page.body, /href="https:\/\/github\.com\/x\/y\/new\/master\?value=&quot;&gt;&lt;script&gt;/);
 });
 
@@ -133,7 +133,7 @@ test('pages are not cached, indexed or leaking referrers, and run no scripts', (
   assert.match(csp, /form-action 'none'/);
   assert.match(csp, /style-src 'sha256-[A-Za-z0-9+/]+=*'/);
   assert.doesNotMatch(csp, /script-src|unsafe/);
-  assert.doesNotMatch(page.body, /<script|<form/);
+  assert.doesNotMatch(page.body, /<script|<form/i);
 });
 
 test('even the longest question makes an editor URL GitHub accepts (well under 8 kB)', () => {
