@@ -21,12 +21,19 @@ export async function constantTimeEqual(a: string, b: string): Promise<boolean> 
 }
 
 /**
+ * The shortest host key the campfire accepts. A shorter CAMPFIRE_HOST_KEY turns host features off, as
+ * if none were set: GET /host answers any guess, so the key has to be too long to guess
+ * (`openssl rand -hex 32` makes 64 characters).
+ */
+export const MIN_HOST_KEY_LENGTH = 32;
+
+/**
  * Who's asking: the host (right key), a guest (no key), someone with the wrong key, or someone with a
- * key while host features are off (no secret configured).
+ * key while host features are off (no secret configured, or one too short to trust).
  */
 export async function checkHost(header: string | null, secret: string | undefined): Promise<HostCheck> {
   const token = bearerToken(header);
   if (token === null) return 'guest';
-  if (!secret) return 'host-off';
+  if (!secret || secret.length < MIN_HOST_KEY_LENGTH) return 'host-off';
   return (await constantTimeEqual(token, secret)) ? 'host' : 'wrong-key';
 }

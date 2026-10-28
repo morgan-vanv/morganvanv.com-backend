@@ -13,7 +13,7 @@ export default defineConfig({
         plugins: [
           cloudflareTest({
             wrangler: { configPath: './wrangler.jsonc' },
-            miniflare: { bindings: { CAMPFIRE_HOST_KEY: 'test-host-key' } },
+            miniflare: { bindings: { CAMPFIRE_HOST_KEY: 'test-host-key-0123456789abcdef-0123' } },
           }),
         ],
         test: { name: 'worker', include: ['test/worker/**/*.test.ts'] },

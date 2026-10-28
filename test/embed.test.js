@@ -260,4 +260,7 @@ test('a question too long for any link says so, and fields stay within Discord\'
 test('a visitor can\'t write a masked link that passes for the real Publish link', () => {
   const { embeds: [embed] } = discordPayload({ question: 'see [Publish as PR](https://evil.example)' }, now);
   assert.equal(embed.description, 'see \\[Publish as PR\\](https://evil.example)');
+  // A backslash of the visitor's own can't cancel the escape (CodeQL: js/incomplete-sanitization).
+  const sneaky = discordPayload({ question: 'see \\[Publish as PR\\](https://evil.example)' }, now).embeds[0];
+  assert.equal(sneaky.description, 'see \\\\\\[Publish as PR\\\\\\](https://evil.example)');
 });

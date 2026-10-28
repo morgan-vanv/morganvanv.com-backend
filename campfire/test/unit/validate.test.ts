@@ -81,6 +81,10 @@ describe('isReservedNick', () => {
     expect(isReservedNick('admin')).toBe(true);
     expect(isReservedNick('morgans_friend')).toBe(true);
     expect(isReservedNick('real.m0rgan')).toBe(true);
+    // "rn" passes for "m" in a small font.
+    expect(isReservedNick('rnorgan')).toBe(true);
+    expect(isReservedNick('rn0rgan')).toBe(true);
+    expect(isReservedNick('adrnin')).toBe(true);
     expect(isReservedNick('administrator')).toBe(false);
     expect(isReservedNick('night_owl')).toBe(false);
   });

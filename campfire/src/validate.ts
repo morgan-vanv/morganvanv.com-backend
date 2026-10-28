@@ -42,11 +42,11 @@ export function normaliseNick(raw: string): string | null {
 
 /**
  * Nicks a guest can't take: anything with "morgan" in it, and the other stand-ins exactly, in any case
- * or leetspeak.
+ * or leetspeak, also read with "rn" as "m" (in a small font "rnorgan" passes for "morgan").
  */
 export function isReservedNick(nick: string): boolean {
   const bare = fold(nick).replace(/ /g, '');
-  return bare.includes('morgan') || RESERVED_NICKS.includes(bare);
+  return [bare, bare.replace(/rn/g, 'm')].some(form => form.includes('morgan') || RESERVED_NICKS.includes(form));
 }
 
 /** URLs and bare domains in the text. */

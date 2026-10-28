@@ -7,7 +7,8 @@ packages:
         environment:
           # DO will inject these from your deployment command (.env)
           DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL}"
-          # "Publish as PR" links (README). Leave either empty and the embed shows the file to add by hand.
+          # "Publish as PR" links (README). Set either to "off" and the embed shows the file to add by hand
+          # (doctl refuses empty values).
           PUBLISH_URL: "${PUBLISH_URL}"
           PUBLISH_SECRET: "${PUBLISH_SECRET}"
         # A submission is one quick webhook call: keep a stuck or abused run short and small.
@@ -21,7 +22,7 @@ packages:
           # Only this function holds the GitHub token; submit never needs it.
           PUBLISH_SECRET: "${PUBLISH_SECRET}"
           GITHUB_TOKEN: "${GITHUB_TOKEN}"
-          GITHUB_REPO: "${GITHUB_REPO}" # empty means morgan-vanv/morganvanv.com
+          GITHUB_REPO: "${GITHUB_REPO}" # "off" means morgan-vanv/morganvanv.com
         limits:
           timeout: 30000 # ms: GitHub calls time out at 8 s each and 25 s in all, before this does
           memory: 128 # MB

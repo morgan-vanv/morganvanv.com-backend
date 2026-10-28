@@ -96,20 +96,20 @@ describe('the campfire Worker', () => {
   });
 
   it('lets the host post as morgan and take shouts down', async () => {
-    const posted = await shout({ text: 'welcome' }, '198.51.100.6', 'test-host-key');
+    const posted = await shout({ text: 'welcome' }, '198.51.100.6', 'test-host-key-0123456789abcdef-0123');
     expect(posted.status).toBe(201);
     const { shout: said } = (await posted.json()) as { shout: Shout };
     expect(said).toMatchObject({ nick: 'morgan', host: true });
 
     expect((await call(`/shouts/${said.id}`, { method: 'DELETE' })).status).toBe(401);
     expect((await call(`/shouts/${said.id}`, { method: 'DELETE', key: 'wrong' })).status).toBe(401);
-    expect((await call(`/shouts/${said.id}`, { method: 'DELETE', key: 'test-host-key' })).status).toBe(204);
-    expect((await call(`/shouts/${said.id}`, { method: 'DELETE', key: 'test-host-key' })).status).toBe(404);
+    expect((await call(`/shouts/${said.id}`, { method: 'DELETE', key: 'test-host-key-0123456789abcdef-0123' })).status).toBe(204);
+    expect((await call(`/shouts/${said.id}`, { method: 'DELETE', key: 'test-host-key-0123456789abcdef-0123' })).status).toBe(404);
     expect((await log()).shouts.some(s => s.id === said.id)).toBe(false);
   });
 
   it('says whether a host key is the right one', async () => {
-    expect((await call('/host', { key: 'test-host-key' })).status).toBe(204);
+    expect((await call('/host', { key: 'test-host-key-0123456789abcdef-0123' })).status).toBe(204);
     expect((await call('/host', { key: 'wrong' })).status).toBe(401);
     expect((await call('/host')).status).toBe(401);
   });
@@ -168,10 +168,10 @@ describe('the campfire Worker', () => {
     const bank = (open: unknown, key?: string) => call('/fire', { method: 'PUT', body: JSON.stringify({ open }), key });
     expect((await bank(false)).status).toBe(401);
     expect((await bank(false, 'wrong')).status).toBe(401);
-    expect((await bank('no', 'test-host-key')).status).toBe(400);
+    expect((await bank('no', 'test-host-key-0123456789abcdef-0123')).status).toBe(400);
     const before = (await log()).shouts;
 
-    const banked = await bank(false, 'test-host-key');
+    const banked = await bank(false, 'test-host-key-0123456789abcdef-0123');
     expect(banked.status).toBe(200);
     expect(await banked.json()).toEqual({ open: false });
     expect((await log()).open).toBe(false);
@@ -180,10 +180,10 @@ describe('the campfire Worker', () => {
     expect(refused.status).toBe(423);
     expect(await refused.json()).toEqual({ error: 'The fire\'s banked for now. Try again later.' });
     // The host can still speak.
-    const host = await shout({ text: 'back soon' }, '198.51.100.20', 'test-host-key');
+    const host = await shout({ text: 'back soon' }, '198.51.100.20', 'test-host-key-0123456789abcdef-0123');
     expect(host.status).toBe(201);
 
-    expect(await (await bank(true, 'test-host-key')).json()).toEqual({ open: true });
+    expect(await (await bank(true, 'test-host-key-0123456789abcdef-0123')).json()).toEqual({ open: true });
     expect((await log()).open).toBe(true);
     expect((await shout({ nick: 'owl', text: 'anyone?' }, '198.51.100.20')).status).toBe(201);
   });
@@ -237,6 +237,6 @@ describe('the campfire Worker', () => {
     expect(refused.status).toBe(429);
     expect(Number(refused.headers.get('Retry-After'))).toBeGreaterThan(0);
     // The host still gets through.
-    expect((await shout({ text: 'still here' }, '2001:db8:ffff::1', 'test-host-key')).status).toBe(201);
+    expect((await shout({ text: 'still here' }, '2001:db8:ffff::1', 'test-host-key-0123456789abcdef-0123')).status).toBe(201);
   });
 });

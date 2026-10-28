@@ -1,4 +1,4 @@
-# Copy to .dev.vars for `npm run dev`. Any string works locally.
-CAMPFIRE_HOST_KEY=local-host-key
+# Copy to .dev.vars for `npm run dev`. Any string of 32 or more characters works locally.
+CAMPFIRE_HOST_KEY=local-host-key-for-dev-only-0123456789
 # Optional: a Discord webhook to ping on every guest shout. Leave it out locally unless you want pings.
 # DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/<id>/<token>
