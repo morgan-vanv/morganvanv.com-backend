@@ -38,3 +38,16 @@ updates:
         patterns: ['wrangler', '@cloudflare/*']
       dev-tools:
         patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /lab-status
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      # Wrangler and the Vitest plugin pin the same Miniflare, so they move together.
+      cloudflare:
+        patterns: ['wrangler', '@cloudflare/*']
+      dev-tools:
+        patterns: ['*']

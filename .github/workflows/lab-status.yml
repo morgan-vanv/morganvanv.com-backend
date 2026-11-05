@@ -1,0 +1,116 @@
+# Lab status (lab-status/): test on every PR into main; deploy the Worker to Cloudflare from main when
+# lab-status/ changes.
+#
+# Actions are pinned to full commit SHAs (the deploy step receives a Cloudflare token);
+# Dependabot (.github/dependabot.yml) proposes updates weekly.
+#
+# Deploying needs, in the production environment: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (shared
+# with the campfire and Ask Morgan). Until both exist the deploy is skipped with a notice. The Worker has no
+# secrets of its own.
+name: Lab status
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'lab-status/**'
+      - '.github/workflows/lab-status.yml'
+  # Every PR, so "Lab status tests" can be made a required check like the others. Deploys only follow
+  # lab-status/ changes (push, above).
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One deploy at a time; PR runs only replace older runs of the same PR.
+  group: lab-status-${{ github.event_name == 'pull_request' && github.ref || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: lab-status
+
+jobs:
+  test:
+    name: Lab status tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: lab-status/.nvmrc
+          cache: npm
+          cache-dependency-path: lab-status/package-lock.json
+      # No dependency install scripts (as in the campfire's workflow): esbuild and workerd ship binaries.
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - name: Build (dry run)
+        run: npx wrangler deploy --dry-run --outdir dist
+
+  deploy:
+    name: Deploy
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The secrets live in this environment, which only main may deploy from.
+    environment: production
+    env:
+      READY: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+    steps:
+      - name: Check for secrets
+        if: env.READY != 'true'
+        # Before checkout there's no lab-status/ folder for the default working-directory.
+        working-directory: .
+        run: |
+          msg="Skipping deploy: add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to the production environment, then run this workflow again (lab-status/README.md)."
+          echo "::notice title=Lab status not deployed::$msg"
+          echo "### Lab status not deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.READY == 'true'
+        with:
+          # This job holds the Cloudflare token; don't leave a GitHub token in .git beside it.
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: env.READY == 'true'
+        with:
+          node-version-file: lab-status/.nvmrc
+          # No npm cache in the job that holds the token: a poisoned cache entry could change what deploys.
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+        if: env.READY == 'true'
+
+      - name: Deploy to Cloudflare
+        id: deploy
+        if: env.READY == 'true'
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: lab-status
+          command: deploy
+
+      - name: Say hello
+        if: env.READY == 'true' && steps.deploy.outputs.deployment-url != ''
+        env:
+          URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          echo "### Lab status deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "$URL" >> "$GITHUB_STEP_SUMMARY"
+          # A brand-new workers.dev name can take a minute to resolve, so this only warns.
+          for i in 1 2 3 4 5 6; do
+            if body=$(curl -fsS "$URL/status"); then
+              echo "$body"
+              echo "$body" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::warning::Deployed, but $URL/status didn't answer yet. Try it in a minute."
