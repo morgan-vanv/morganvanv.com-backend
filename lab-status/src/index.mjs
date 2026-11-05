@@ -11,7 +11,7 @@ const { targetsFrom, checkAll, memoized } = statusModule;
 
 export const NAME = 'lab-status';
 /** Kept in step with package.json (a test checks). */
-export const VERSION = '1.0.0';
+export const VERSION = '1.0.1';
 export const SOURCE_URL = 'https://github.com/morgan-vanv/morganvanv.com-backend/tree/main/lab-status';
 
 /** Who may read /status from a browser (the same list as the ask Worker's and the campfire's). */
@@ -49,15 +49,22 @@ async function allowed(limiter, key) {
   }
 }
 
-// One memo per isolate, made on first use (env is only known inside fetch).
+// One memo per isolate and per target list: env is only known inside fetch, and a config-only deploy can
+// land in a reused isolate, so a changed list starts a fresh memo rather than checking the old addresses.
 let current = null;
+let currentKey = '';
 function statusFor(env) {
-  if (!current) current = memoized(() => checkAll(targetsFrom(env), fetch));
+  const targets = targetsFrom(env);
+  const key = JSON.stringify(targets);
+  if (!current || key !== currentKey) {
+    current = memoized(() => checkAll(targets, fetch));
+    currentKey = key;
+  }
   return current();
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const origin = request.headers.get('Origin');
     const cors = corsHeaders(origin);
@@ -74,7 +81,10 @@ export default {
       return json(429, { error: 'Slow down a little.' }, { 'Retry-After': '60', ...cors });
     }
 
-    const result = await statusFor(env);
+    // The check is shared with other visitors, so it must finish even if this one leaves mid-request.
+    const pending = statusFor(env);
+    ctx?.waitUntil(pending.catch(() => {}));
+    const result = await pending;
     return json(200, result, { 'Cache-Control': 'public, max-age=60', ...cors }, request.method);
   },
 };

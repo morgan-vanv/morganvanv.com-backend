@@ -1,6 +1,6 @@
 {
   "name": "lab-status",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Lab status: whether the homelab's public services are up, for morganvanv.com's Lab page. One Cloudflare Worker.",
   "engines": {
