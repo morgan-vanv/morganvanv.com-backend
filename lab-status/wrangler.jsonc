@@ -1,0 +1,27 @@
+// Lab status: one Worker, one route (src/index.mjs). Deployed by .github/workflows/lab-status.yml.
+// Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lab-status",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-10-23",
+  "workers_dev": true,
+  "preview_urls": false,
+
+  // Not secret (both are in public DNS); change them by PR. A service whose var is missing isn't checked
+  // and isn't in the answer, so the site shows no light for it.
+  "vars": {
+    // Foundry VTT. Any 2xx or 3xx counts as up (it redirects visitors to /join).
+    "VTT_URL": "https://vtt.morganvanv.com/",
+    // Jellyfin's health endpoint, through the VPS. Up when it says "Healthy".
+    "JELLYFIN_HEALTH_URL": "https://vanvtv.morganvanv.com/health"
+  },
+
+  // Per Cloudflare location and approximate, which is plenty here. Keys are the visitor's IP (never stored).
+  // Results are reused for two minutes either way, so this only stops one visitor hammering the Worker itself.
+  "ratelimits": [
+    { "name": "STATUS_PER_VISITOR", "namespace_id": "3001", "simple": { "limit": 30, "period": 60 } }
+  ],
+
+  "observability": { "enabled": true }
+}
