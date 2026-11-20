@@ -31,6 +31,7 @@ describe('the lab-status Worker', () => {
     const body = await response.json();
     expect(Number.isNaN(Date.parse(body.checkedAt))).toBe(false);
     expect(body.services).toEqual({});
+    expect(body.players).toBeUndefined();
   });
 
   it('lets the site read it, and no one else', async () => {

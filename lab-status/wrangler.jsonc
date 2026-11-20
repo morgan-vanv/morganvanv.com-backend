@@ -8,13 +8,17 @@
   "workers_dev": true,
   "preview_urls": false,
 
-  // Not secret (both are in public DNS); change them by PR. A service whose var is missing isn't checked
-  // and isn't in the answer, so the site shows no light for it.
+  // Not secret (all of them are in public DNS); change them by PR. A service whose var is missing isn't
+  // checked and isn't in the answer, so the site shows no light for it.
   "vars": {
-    // Foundry VTT. Any 2xx or 3xx counts as up (it redirects visitors to /join).
+    // Foundry VTT. Any 2xx or 3xx counts as up (its gate sends visitors to sign in).
     "VTT_URL": "https://vtt.morganvanv.com/",
     // Jellyfin's health endpoint, through the VPS. Up when it says "Healthy".
-    "JELLYFIN_HEALTH_URL": "https://vanvtv.morganvanv.com/health"
+    "JELLYFIN_HEALTH_URL": "https://vanvtv.morganvanv.com/health",
+    // The front desk (Authentik): its public liveness endpoint, the one Kuma's "Authentik public" watches.
+    "DESK_HEALTH_URL": "https://auth.morganvanv.com/-/health/live/",
+    // The Minecraft network, asked like the game's server list does (host:port, Java's port).
+    "MINECRAFT_ADDRESS": "mc.morganvanv.com:25565"
   },
 
   // Per Cloudflare location and approximate, which is plenty here. Keys are the visitor's IP (never stored).
