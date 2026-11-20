@@ -1,17 +1,20 @@
 // The Lab page's up/down lights as a Cloudflare Worker. One route, a thin adapter over status.js, which
 // knows nothing about Workers (so it runs under node --test):
 //
-//   GET|HEAD /status   { checkedAt, services: { vtt: 'up' | 'down', jellyfin: 'up' | 'down' } }
+//   GET|HEAD /status   { checkedAt, services: { vtt, jellyfin, desk, minecraft: 'up' | 'down' },
+//                        players?: { minecraft: <how many are on> } }
 //   GET /              name and version
 //
 // No secrets, no storage, no bindings but a rate limit: results are kept in memory for two minutes per isolate.
+// The Minecraft check opens one TCP socket (cloudflare:sockets) per check, so also at most every two minutes.
+import { connect } from 'cloudflare:sockets';
 import statusModule from './status.js';
 
 const { targetsFrom, checkAll, memoized } = statusModule;
 
 export const NAME = 'lab-status';
 /** Kept in step with package.json (a test checks). */
-export const VERSION = '1.0.1';
+export const VERSION = '1.1.0';
 export const SOURCE_URL = 'https://github.com/morgan-vanv/morganvanv.com-backend/tree/main/lab-status';
 
 /** Who may read /status from a browser (the same list as the ask Worker's and the campfire's). */
@@ -57,7 +60,7 @@ function statusFor(env) {
   const targets = targetsFrom(env);
   const key = JSON.stringify(targets);
   if (!current || key !== currentKey) {
-    current = memoized(() => checkAll(targets, fetch));
+    current = memoized(() => checkAll(targets, fetch, undefined, connect));
     currentKey = key;
   }
   return current();

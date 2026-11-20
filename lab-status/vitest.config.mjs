@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     cloudflareTest({
       wrangler: { configPath: './wrangler.jsonc' },
-      miniflare: { bindings: { VTT_URL: '', JELLYFIN_HEALTH_URL: '' } },
+      miniflare: { bindings: { VTT_URL: '', JELLYFIN_HEALTH_URL: '', DESK_HEALTH_URL: '', MINECRAFT_ADDRESS: '' } },
     }),
   ],
   test: { include: ['test/worker/**/*.test.mjs'] },
