@@ -16,8 +16,8 @@
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "1.4.8",
+    "@cloudflare/vitest-plugin": "1.8.1",
     "vitest": "^5.1.0",
-    "wrangler": "4.153.0"
+    "wrangler": "4.161.0"
   }
 }
