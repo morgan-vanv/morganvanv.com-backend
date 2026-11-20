@@ -1,5 +1,7 @@
-# Weekly, grouped update PRs: the workflows' pinned actions and the two Workers' npm packages (dev tools only:
-# neither Worker has runtime dependencies).
+# Weekly, grouped update PRs: the workflows' pinned actions and the three Workers' npm packages (dev tools only:
+# no Worker has runtime dependencies). wrangler and @cloudflare/* group first ("cloudflare", merged by a person,
+# since wrangler builds and deploys); the rest of the dev dependencies are "dev-tools", which merge themselves
+# when green, as do Actions updates (.github/workflows/dependabot-auto-merge.yml).
 # Each waits a week after a release (security updates don't), so a hijacked version is usually gone first.
 version: 2
 updates:
@@ -24,6 +26,7 @@ updates:
       cloudflare:
         patterns: ['wrangler', '@cloudflare/*']
       dev-tools:
+        dependency-type: development
         patterns: ['*']
 
   - package-ecosystem: npm
@@ -37,6 +40,7 @@ updates:
       cloudflare:
         patterns: ['wrangler', '@cloudflare/*']
       dev-tools:
+        dependency-type: development
         patterns: ['*']
 
   - package-ecosystem: npm
@@ -50,4 +54,5 @@ updates:
       cloudflare:
         patterns: ['wrangler', '@cloudflare/*']
       dev-tools:
+        dependency-type: development
         patterns: ['*']

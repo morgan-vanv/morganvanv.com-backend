@@ -1,0 +1,35 @@
+name: Dependabot auto-merge
+# Two kinds of Dependabot PR merge themselves (squash) once every required check passes:
+#   - GitHub Actions updates (dependabot/github_actions/...), as on morganvanv.com;
+#   - each Worker's dev-tools group (dependabot/npm_and_yarn/<worker>/dev-tools-...): test and type-check
+#     tooling (vitest, typescript) that never ships. .github/dependabot.yml keeps that group to dev
+#     dependencies and puts wrangler and @cloudflare/* in their own group first.
+# The cloudflare group (wrangler builds and deploys the Workers) and anything ungrouped wait for a person.
+# If GitHub ever refuses (a rule or permission change), the PR simply stays open: nothing breaks.
+#
+# Needs "Allow auto-merge" on in the repo settings, and every Worker's tests as required checks on main,
+# since auto-merge only waits for required ones. A merge made with this job's token doesn't start other
+# workflows, so nothing deploys from it; neither kind of update changes what's deployed.
+on: pull_request
+
+# Nothing by default; only the one job below gets write access, and only for Dependabot's own PRs.
+permissions: {}
+
+jobs:
+  auto-merge:
+    name: Auto-merge Actions and dev-tools updates
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      (startsWith(github.head_ref, 'dependabot/github_actions/') ||
+       (startsWith(github.head_ref, 'dependabot/npm_and_yarn/') && contains(github.head_ref, '/dev-tools-')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # To turn on auto-merge for this PR (gh pr merge --auto).
+      contents: write
+      pull-requests: write
+    steps:
+      - run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ github.token }}
